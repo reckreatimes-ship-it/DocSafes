@@ -10,7 +10,8 @@ import { Label } from '@/components/ui/label';
 import { categories } from '@/lib/categories';
 import { saveDocument, Document } from '@/lib/storage';
 import { useAuth } from '@/contexts/AuthContext';
-import { encryptData, exportKey } from '@/lib/crypto';
+import { encryptData } from '@/lib/crypto';
+import { arrayBufferToBase64, uint8ArrayToBase64 } from '@/lib/base64';
 import { cn } from '@/lib/utils';
 import { toast } from '@/hooks/use-toast';
 
@@ -76,9 +77,9 @@ export function AddDocumentPage() {
       // Encrypt the file
       const { encrypted, iv } = await encryptData(arrayBuffer, encryptionKey);
       
-      // Convert to base64 for storage
-      const encryptedBase64 = btoa(String.fromCharCode(...new Uint8Array(encrypted)));
-      const ivBase64 = btoa(String.fromCharCode(...iv));
+      // Convert to base64 for storage (using chunked approach for large files)
+      const encryptedBase64 = arrayBufferToBase64(encrypted);
+      const ivBase64 = uint8ArrayToBase64(iv);
 
       // Create document record
       const doc: Document = {
