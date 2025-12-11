@@ -1,7 +1,7 @@
 {
-  "name": "DocWallet",
-  "short_name": "DocWallet",
-  "description": "Vos documents sécurisés, stockés localement",
+  "name": "DocSafe",
+  "short_name": "DocSafe",
+  "description": "Vos documents sécurisés, stockés localement avec chiffrement AES-256",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#0f172a",

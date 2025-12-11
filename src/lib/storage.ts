@@ -104,6 +104,15 @@ export async function deleteDocument(id: string): Promise<void> {
   await database.delete('documents', id);
 }
 
+export async function updateDocument(id: string, updates: Partial<Document>): Promise<void> {
+  const database = await initDB();
+  const doc = await database.get('documents', id);
+  if (doc) {
+    const updated = { ...doc, ...updates, updatedAt: new Date() };
+    await database.put('documents', updated);
+  }
+}
+
 export async function searchDocuments(query: string): Promise<Document[]> {
   const all = await getAllDocuments();
   const lowerQuery = query.toLowerCase();
