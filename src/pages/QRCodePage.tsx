@@ -1,31 +1,37 @@
 import React, { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { QRCodeSVG } from 'qrcode.react';
-import { Clock, RefreshCw, Shield, Wifi, Bluetooth } from 'lucide-react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { Clock, RefreshCw, Shield, AlertTriangle } from 'lucide-react';
+import { useParams } from 'react-router-dom';
 import { Layout } from '@/components/Layout';
 import { Header } from '@/components/Header';
 import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/EmptyState';
 import { getDocument, Document } from '@/lib/storage';
 import { getCategoryById } from '@/lib/categories';
+import { useAuth } from '@/contexts/AuthContext';
+import { decryptData } from '@/lib/crypto';
+import { base64ToArrayBuffer, base64ToUint8Array, arrayBufferToBase64 } from '@/lib/base64';
+
+const MAX_QR_SIZE = 2000; // Maximum characters for QR code
 
 export function QRCodePage() {
   const { documentId } = useParams<{ documentId: string }>();
-  const navigate = useNavigate();
+  const { encryptionKey } = useAuth();
   
   const [document, setDocument] = useState<Document | null>(null);
   const [isLoading, setIsLoading] = useState(true);
-  const [token, setToken] = useState<string>('');
+  const [qrValue, setQrValue] = useState<string>('');
   const [timeLeft, setTimeLeft] = useState(60);
   const [isExpired, setIsExpired] = useState(false);
+  const [isTooLarge, setIsTooLarge] = useState(false);
+  const [token, setToken] = useState<string>('');
 
   useEffect(() => {
-    if (documentId) {
-      loadDocument();
-      generateToken();
+    if (documentId && encryptionKey) {
+      loadDocumentAndGenerateQR();
     }
-  }, [documentId]);
+  }, [documentId, encryptionKey]);
 
   // Countdown timer
   useEffect(() => {
@@ -41,12 +47,16 @@ export function QRCodePage() {
     return () => clearInterval(timer);
   }, [timeLeft]);
 
-  const loadDocument = async () => {
-    if (!documentId) return;
+  const loadDocumentAndGenerateQR = async () => {
+    if (!documentId || !encryptionKey) return;
 
     try {
       const doc = await getDocument(documentId);
       setDocument(doc || null);
+      
+      if (doc) {
+        await generateQRCode(doc);
+      }
     } catch (error) {
       console.error('Error loading document:', error);
     } finally {
@@ -54,12 +64,55 @@ export function QRCodePage() {
     }
   };
 
-  const generateToken = () => {
-    // Generate a temporary token (NOT the actual file)
-    const tempToken = crypto.randomUUID().slice(0, 8).toUpperCase();
-    setToken(tempToken);
-    setTimeLeft(60);
-    setIsExpired(false);
+  const generateQRCode = async (doc: Document) => {
+    try {
+      // Decrypt the document data
+      const encryptedBuffer = base64ToArrayBuffer(doc.encryptedData);
+      const iv = base64ToUint8Array(doc.iv);
+      const decryptedData = await decryptData(encryptedBuffer, encryptionKey!, iv);
+      
+      // Convert to base64 for sharing
+      const fileBase64 = arrayBufferToBase64(decryptedData);
+      
+      // Create share data
+      const shareData = {
+        name: doc.name,
+        type: doc.type,
+        mimeType: doc.mimeType,
+        data: fileBase64,
+        size: doc.size
+      };
+      
+      const encodedData = btoa(JSON.stringify(shareData));
+      const expiryTime = Date.now() + 60000; // 60 seconds
+      
+      // Build the URL
+      const baseUrl = window.location.origin;
+      const shareUrl = `${baseUrl}/receive?d=${encodeURIComponent(encodedData)}&e=${expiryTime}`;
+      
+      // Check if the URL is too large for QR code
+      if (shareUrl.length > MAX_QR_SIZE) {
+        setIsTooLarge(true);
+        // Generate a simple token-based QR for large files
+        const tempToken = crypto.randomUUID().slice(0, 8).toUpperCase();
+        setToken(tempToken);
+        setQrValue(`${baseUrl}/receive?token=${tempToken}&size=large`);
+      } else {
+        setIsTooLarge(false);
+        setQrValue(shareUrl);
+      }
+      
+      setTimeLeft(60);
+      setIsExpired(false);
+    } catch (error) {
+      console.error('Error generating QR code:', error);
+    }
+  };
+
+  const regenerateQR = () => {
+    if (document && encryptionKey) {
+      generateQRCode(document);
+    }
   };
 
   if (isLoading) {
@@ -86,12 +139,6 @@ export function QRCodePage() {
   }
 
   const category = getCategoryById(document.category);
-  const qrValue = JSON.stringify({
-    token,
-    docId: document.id,
-    type: 'docwallet-share',
-    expires: Date.now() + timeLeft * 1000
-  });
 
   return (
     <Layout>
@@ -130,7 +177,7 @@ export function QRCodePage() {
               <div className="absolute inset-0 bg-background/80 backdrop-blur-sm rounded-2xl flex items-center justify-center z-10">
                 <div className="text-center">
                   <p className="text-destructive font-medium mb-2">QR Code expiré</p>
-                  <Button onClick={generateToken} size="sm">
+                  <Button onClick={regenerateQR} size="sm">
                     <RefreshCw className="w-4 h-4 mr-2" />
                     Régénérer
                   </Button>
@@ -138,13 +185,15 @@ export function QRCodePage() {
               </div>
             )}
             
-            <QRCodeSVG
-              value={qrValue}
-              size={200}
-              level="H"
-              includeMargin
-              className="rounded-lg"
-            />
+            {qrValue && (
+              <QRCodeSVG
+                value={qrValue}
+                size={200}
+                level="L"
+                includeMargin
+                className="rounded-lg"
+              />
+            )}
           </div>
 
           {/* Timer */}
@@ -161,44 +210,30 @@ export function QRCodePage() {
             </span>
           </motion.div>
 
-          <p className="text-xs text-muted-foreground mt-2">
-            Code temporaire: <span className="font-mono font-bold">{token}</span>
-          </p>
+          {isTooLarge && (
+            <p className="text-xs text-muted-foreground mt-2">
+              Token: <span className="font-mono font-bold">{token}</span>
+            </p>
+          )}
         </motion.div>
 
-        {/* Transfer methods */}
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.2 }}
-          className="space-y-3"
-        >
-          <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">
-            Méthodes de transfert
-          </h3>
-
-          <div className="grid grid-cols-2 gap-3">
-            <div className="flex items-center gap-3 p-4 bg-card rounded-xl border border-border">
-              <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center">
-                <Wifi className="w-5 h-5 text-primary" />
-              </div>
-              <div>
-                <p className="font-medium text-foreground text-sm">Wi-Fi Direct</p>
-                <p className="text-xs text-muted-foreground">Rapide</p>
-              </div>
+        {/* Warning for large files */}
+        {isTooLarge && (
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.2 }}
+            className="flex items-start gap-3 p-4 bg-warning/10 rounded-xl"
+          >
+            <AlertTriangle className="w-5 h-5 text-warning shrink-0 mt-0.5" />
+            <div>
+              <p className="text-sm font-medium text-foreground">Fichier volumineux</p>
+              <p className="text-xs text-muted-foreground mt-1">
+                Ce fichier est trop volumineux pour être intégré au QR code. Utilisez le partage classique pour les gros fichiers.
+              </p>
             </div>
-
-            <div className="flex items-center gap-3 p-4 bg-card rounded-xl border border-border">
-              <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center">
-                <Bluetooth className="w-5 h-5 text-primary" />
-              </div>
-              <div>
-                <p className="font-medium text-foreground text-sm">Bluetooth</p>
-                <p className="text-xs text-muted-foreground">Universel</p>
-              </div>
-            </div>
-          </div>
-        </motion.div>
+          </motion.div>
+        )}
 
         {/* Security info */}
         <motion.div
@@ -209,9 +244,9 @@ export function QRCodePage() {
         >
           <Shield className="w-5 h-5 text-primary shrink-0 mt-0.5" />
           <div>
-            <p className="text-sm font-medium text-foreground">Transfert chiffré</p>
+            <p className="text-sm font-medium text-foreground">Transfert direct</p>
             <p className="text-xs text-muted-foreground mt-1">
-              Le QR code contient uniquement un token temporaire. Le document sera transféré de manière chiffrée via Wi-Fi Direct ou Bluetooth.
+              Scannez ce QR code avec n'importe quelle app de scan. Le document sera téléchargé directement sans passer par un serveur.
             </p>
           </div>
         </motion.div>
