@@ -1,7 +1,7 @@
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from "react-router-dom";
 import { AuthProvider, useAuth } from "@/contexts/AuthContext";
 import { ThemeProvider } from "@/contexts/ThemeContext";
 import { LockScreen } from "@/components/LockScreen";
@@ -14,11 +14,48 @@ import { CategoriesPage } from "@/pages/CategoriesPage";
 import { DocumentViewPage } from "@/pages/DocumentViewPage";
 import { SharePage } from "@/pages/SharePage";
 import { QRCodePage } from "@/pages/QRCodePage";
+import { ReceivePage } from "@/pages/ReceivePage";
 
 const queryClient = new QueryClient();
 
+// Routes that don't require authentication
+function PublicRoutes() {
+  return (
+    <Routes>
+      <Route path="/receive" element={<ReceivePage />} />
+    </Routes>
+  );
+}
+
+// Routes that require authentication
+function ProtectedRoutes() {
+  return (
+    <Routes>
+      <Route path="/" element={<Navigate to="/home" replace />} />
+      <Route path="/home" element={<HomePage />} />
+      <Route path="/search" element={<SearchPage />} />
+      <Route path="/add" element={<AddDocumentPage />} />
+      <Route path="/settings" element={<SettingsPage />} />
+      <Route path="/categories" element={<CategoriesPage />} />
+      <Route path="/category/:categoryId" element={<CategoryPage />} />
+      <Route path="/document/:documentId" element={<DocumentViewPage />} />
+      <Route path="/share/:documentId" element={<SharePage />} />
+      <Route path="/qr/:documentId" element={<QRCodePage />} />
+      <Route path="*" element={<Navigate to="/home" replace />} />
+    </Routes>
+  );
+}
+
 function AppContent() {
   const { isAuthenticated, isSetup, isLoading } = useAuth();
+  const location = useLocation();
+
+  // Allow public routes without authentication
+  const isPublicRoute = location.pathname.startsWith('/receive');
+
+  if (isPublicRoute) {
+    return <PublicRoutes />;
+  }
 
   if (isLoading) {
     return (
@@ -36,23 +73,7 @@ function AppContent() {
     return <LockScreen />;
   }
 
-  return (
-    <BrowserRouter>
-      <Routes>
-        <Route path="/" element={<Navigate to="/home" replace />} />
-        <Route path="/home" element={<HomePage />} />
-        <Route path="/search" element={<SearchPage />} />
-        <Route path="/add" element={<AddDocumentPage />} />
-        <Route path="/settings" element={<SettingsPage />} />
-        <Route path="/categories" element={<CategoriesPage />} />
-        <Route path="/category/:categoryId" element={<CategoryPage />} />
-        <Route path="/document/:documentId" element={<DocumentViewPage />} />
-        <Route path="/share/:documentId" element={<SharePage />} />
-        <Route path="/qr/:documentId" element={<QRCodePage />} />
-        <Route path="*" element={<Navigate to="/home" replace />} />
-      </Routes>
-    </BrowserRouter>
-  );
+  return <ProtectedRoutes />;
 }
 
 const App = () => (
@@ -61,7 +82,9 @@ const App = () => (
       <AuthProvider>
         <TooltipProvider>
           <Toaster />
-          <AppContent />
+          <BrowserRouter>
+            <AppContent />
+          </BrowserRouter>
         </TooltipProvider>
       </AuthProvider>
     </ThemeProvider>
