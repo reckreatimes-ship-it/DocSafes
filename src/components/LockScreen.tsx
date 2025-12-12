@@ -1,9 +1,10 @@
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Shield, Eye, EyeOff, Fingerprint, ScanFace, HelpCircle } from 'lucide-react';
+import { Shield, Eye, EyeOff, Fingerprint, ScanFace, HelpCircle, KeyRound } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
+import { Label } from '@/components/ui/label';
 import { ResetPassword } from '@/components/ResetPassword';
 import { cn } from '@/lib/utils';
 
@@ -11,6 +12,15 @@ interface LockScreenProps {
   isSetup?: boolean;
   onReset?: () => void;
 }
+
+const SECRET_QUESTIONS = [
+  "Quel est le nom de votre premier animal ?",
+  "Quelle est votre ville de naissance ?",
+  "Quel est le prénom de votre meilleur ami d'enfance ?",
+  "Quel est le nom de jeune fille de votre mère ?",
+  "Quelle était votre école primaire ?",
+  "Quel est votre plat préféré ?",
+];
 
 // Validation du mot de passe: au moins 8 caractères, 1 majuscule, 1 caractère spécial AZERTY
 const validatePassword = (password: string): { valid: boolean; errors: string[] } => {
@@ -22,7 +32,6 @@ const validatePassword = (password: string): { valid: boolean; errors: string[] 
   if (!/[A-Z]/.test(password)) {
     errors.push('Au moins une majuscule');
   }
-  // Caractères spéciaux courants sur clavier AZERTY
   if (!/[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?€£µ§²°`~]/.test(password)) {
     errors.push('Au moins un caractère spécial (!@#$%&*...)');
   }
@@ -30,11 +39,15 @@ const validatePassword = (password: string): { valid: boolean; errors: string[] 
   return { valid: errors.length === 0, errors };
 };
 
+type SetupStep = 'password' | 'confirm' | 'secret';
+
 export function LockScreen({ isSetup = false, onReset }: LockScreenProps) {
   const { login, setup, loginWithBiometrics, isBiometricsAvailable } = useAuth();
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
-  const [isConfirming, setIsConfirming] = useState(false);
+  const [setupStep, setSetupStep] = useState<SetupStep>('password');
+  const [secretQuestion, setSecretQuestion] = useState(SECRET_QUESTIONS[0]);
+  const [secretAnswer, setSecretAnswer] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
   const [validationErrors, setValidationErrors] = useState<string[]>([]);
@@ -59,23 +72,28 @@ export function LockScreen({ isSetup = false, onReset }: LockScreenProps) {
     setValidationErrors([]);
 
     if (isSetup) {
-      if (isConfirming) {
-        if (confirmPassword !== password) {
-          setError('Les mots de passe ne correspondent pas');
-          setConfirmPassword('');
-          return;
-        }
-        
-        setIsLoading(true);
-        await setup(confirmPassword);
-        setIsLoading(false);
-      } else {
+      if (setupStep === 'password') {
         const validation = validatePassword(password);
         if (!validation.valid) {
           setValidationErrors(validation.errors);
           return;
         }
-        setIsConfirming(true);
+        setSetupStep('confirm');
+      } else if (setupStep === 'confirm') {
+        if (confirmPassword !== password) {
+          setError('Les mots de passe ne correspondent pas');
+          setConfirmPassword('');
+          return;
+        }
+        setSetupStep('secret');
+      } else if (setupStep === 'secret') {
+        if (!secretAnswer.trim()) {
+          setError('Veuillez entrer une réponse');
+          return;
+        }
+        setIsLoading(true);
+        await setup(password, secretQuestion, secretAnswer);
+        setIsLoading(false);
       }
     } else {
       setIsLoading(true);
@@ -101,16 +119,29 @@ export function LockScreen({ isSetup = false, onReset }: LockScreenProps) {
     }
   };
 
+  const getTitle = () => {
+    if (!isSetup) return 'Entrez votre mot de passe';
+    switch (setupStep) {
+      case 'password': return 'Créez un mot de passe sécurisé';
+      case 'confirm': return 'Confirmez votre mot de passe';
+      case 'secret': return 'Question secrète de récupération';
+    }
+  };
+
   return (
-    <div className="fixed inset-0 bg-background flex flex-col items-center justify-center p-6 safe-area-top safe-area-bottom">
+    <div className="fixed inset-0 bg-background flex flex-col items-center justify-center p-6 safe-area-top safe-area-bottom overflow-y-auto">
       {/* Logo */}
       <motion.div
         initial={{ scale: 0.8, opacity: 0 }}
         animate={{ scale: 1, opacity: 1 }}
-        className="mb-8"
+        className="mb-6"
       >
         <div className="w-20 h-20 rounded-2xl gradient-primary flex items-center justify-center shadow-glow">
-          <Shield className="w-10 h-10 text-primary-foreground" />
+          {setupStep === 'secret' && isSetup ? (
+            <KeyRound className="w-10 h-10 text-primary-foreground" />
+          ) : (
+            <Shield className="w-10 h-10 text-primary-foreground" />
+          )}
         </div>
       </motion.div>
 
@@ -119,18 +150,13 @@ export function LockScreen({ isSetup = false, onReset }: LockScreenProps) {
         initial={{ y: 20, opacity: 0 }}
         animate={{ y: 0, opacity: 1 }}
         transition={{ delay: 0.1 }}
-        className="text-center mb-8"
+        className="text-center mb-6"
       >
         <h1 className="text-2xl font-bold text-foreground mb-2">DocSafe</h1>
-        <p className="text-muted-foreground">
-          {isSetup 
-            ? (isConfirming ? 'Confirmez votre mot de passe' : 'Créez un mot de passe sécurisé')
-            : 'Entrez votre mot de passe'
-          }
-        </p>
+        <p className="text-muted-foreground">{getTitle()}</p>
       </motion.div>
 
-      {/* Password Form */}
+      {/* Form */}
       <motion.form
         initial={{ y: 20, opacity: 0 }}
         animate={{ y: 0, opacity: 1 }}
@@ -138,35 +164,74 @@ export function LockScreen({ isSetup = false, onReset }: LockScreenProps) {
         onSubmit={handleSubmit}
         className="w-full max-w-sm space-y-4"
       >
-        <div className="relative">
-          <Input
-            type={showPassword ? 'text' : 'password'}
-            value={isConfirming ? confirmPassword : password}
-            onChange={(e) => {
-              if (isConfirming) {
-                setConfirmPassword(e.target.value);
-              } else {
-                setPassword(e.target.value);
-              }
-              setError('');
-              setValidationErrors([]);
-            }}
-            placeholder={isConfirming ? 'Confirmez le mot de passe' : 'Mot de passe'}
-            className="h-14 text-lg pr-12 bg-secondary border-0"
-            autoFocus
-            disabled={isLoading}
-          />
-          <button
-            type="button"
-            onClick={() => setShowPassword(!showPassword)}
-            className="absolute right-3 top-1/2 -translate-y-1/2 p-2 text-muted-foreground hover:text-foreground transition-colors"
-          >
-            {showPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
-          </button>
-        </div>
+        {/* Password input (for login or setup password/confirm steps) */}
+        {(!isSetup || setupStep === 'password' || setupStep === 'confirm') && (
+          <div className="relative">
+            <Input
+              type={showPassword ? 'text' : 'password'}
+              value={setupStep === 'confirm' ? confirmPassword : password}
+              onChange={(e) => {
+                if (setupStep === 'confirm') {
+                  setConfirmPassword(e.target.value);
+                } else {
+                  setPassword(e.target.value);
+                }
+                setError('');
+                setValidationErrors([]);
+              }}
+              placeholder={setupStep === 'confirm' ? 'Confirmez le mot de passe' : 'Mot de passe'}
+              className="h-14 text-lg pr-12 bg-secondary border-0"
+              autoFocus
+              disabled={isLoading}
+            />
+            <button
+              type="button"
+              onClick={() => setShowPassword(!showPassword)}
+              className="absolute right-3 top-1/2 -translate-y-1/2 p-2 text-muted-foreground hover:text-foreground transition-colors"
+            >
+              {showPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+            </button>
+          </div>
+        )}
+
+        {/* Secret question setup */}
+        {isSetup && setupStep === 'secret' && (
+          <div className="space-y-4">
+            <div>
+              <Label className="text-foreground mb-2 block">Question secrète</Label>
+              <select
+                value={secretQuestion}
+                onChange={(e) => setSecretQuestion(e.target.value)}
+                className="w-full h-12 px-4 bg-secondary border-0 rounded-md text-foreground"
+              >
+                {SECRET_QUESTIONS.map((q) => (
+                  <option key={q} value={q}>{q}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <Label className="text-foreground mb-2 block">Votre réponse</Label>
+              <Input
+                type="text"
+                value={secretAnswer}
+                onChange={(e) => {
+                  setSecretAnswer(e.target.value);
+                  setError('');
+                }}
+                placeholder="Entrez votre réponse..."
+                className="h-12 bg-secondary border-0"
+                autoFocus
+                disabled={isLoading}
+              />
+              <p className="text-xs text-muted-foreground mt-2">
+                Cette réponse vous permettra de récupérer votre compte si vous oubliez votre mot de passe.
+              </p>
+            </div>
+          </div>
+        )}
 
         {/* Validation errors for setup */}
-        {isSetup && !isConfirming && validationErrors.length > 0 && (
+        {isSetup && setupStep === 'password' && validationErrors.length > 0 && (
           <motion.div
             initial={{ opacity: 0, y: -10 }}
             animate={{ opacity: 1, y: 0 }}
@@ -182,7 +247,7 @@ export function LockScreen({ isSetup = false, onReset }: LockScreenProps) {
         )}
 
         {/* Password requirements hint for setup */}
-        {isSetup && !isConfirming && validationErrors.length === 0 && (
+        {isSetup && setupStep === 'password' && validationErrors.length === 0 && (
           <div className="text-xs text-muted-foreground space-y-1">
             <p className={cn(password.length >= 8 && "text-green-500")}>
               • Au moins 8 caractères
@@ -212,17 +277,32 @@ export function LockScreen({ isSetup = false, onReset }: LockScreenProps) {
 
         <Button
           type="submit"
-          disabled={isLoading || (isConfirming ? !confirmPassword : !password)}
+          disabled={isLoading || (setupStep === 'confirm' ? !confirmPassword : setupStep === 'secret' ? !secretAnswer.trim() : !password)}
           className="w-full h-14 text-lg gradient-primary"
         >
           {isLoading ? (
             <div className="w-6 h-6 border-2 border-primary-foreground border-t-transparent rounded-full animate-spin" />
           ) : isSetup ? (
-            isConfirming ? 'Confirmer' : 'Continuer'
+            setupStep === 'secret' ? 'Terminer la configuration' : 'Continuer'
           ) : (
             'Déverrouiller'
           )}
         </Button>
+
+        {/* Back button during setup */}
+        {isSetup && setupStep !== 'password' && (
+          <Button
+            type="button"
+            variant="ghost"
+            onClick={() => {
+              if (setupStep === 'confirm') setSetupStep('password');
+              else if (setupStep === 'secret') setSetupStep('confirm');
+            }}
+            className="w-full"
+          >
+            Retour
+          </Button>
+        )}
       </motion.form>
 
       {/* Biometric options */}
@@ -231,7 +311,7 @@ export function LockScreen({ isSetup = false, onReset }: LockScreenProps) {
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           transition={{ delay: 0.4 }}
-          className="mt-8 flex flex-col items-center gap-4"
+          className="mt-6 flex flex-col items-center gap-4"
         >
           <p className="text-sm text-muted-foreground">ou utilisez</p>
           <div className="flex gap-4">
