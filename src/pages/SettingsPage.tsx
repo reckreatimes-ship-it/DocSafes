@@ -270,16 +270,16 @@ export function SettingsPage() {
           <div className="bg-card rounded-2xl border border-border overflow-hidden">
             <SettingItem
               icon={HelpCircle}
-              label="À propos de DocWallet"
+              label="À propos de DocSafe"
               description="Version 1.0.0"
-              onClick={() => toast({ title: 'DocWallet v1.0.0', description: 'Vos documents sécurisés, 100% locaux.' })}
+              onClick={() => toast({ title: 'DocSafe v1.0.0', description: 'Vos documents sécurisés, 100% locaux.' })}
             />
           </div>
         </motion.section>
 
         {/* Footer */}
         <p className="text-xs text-muted-foreground text-center pt-4">
-          DocWallet - Stockage 100% local et sécurisé
+          DocSafe - Stockage 100% local et sécurisé
         </p>
       </div>
     </Layout>

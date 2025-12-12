@@ -1,3 +1,4 @@
+import React from "react";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -49,6 +50,7 @@ function ProtectedRoutes() {
 function AppContent() {
   const { isAuthenticated, isSetup, isLoading } = useAuth();
   const location = useLocation();
+  const [resetKey, setResetKey] = React.useState(0);
 
   // Allow public routes without authentication
   const isPublicRoute = location.pathname.startsWith('/receive');
@@ -66,11 +68,11 @@ function AppContent() {
   }
 
   if (!isSetup) {
-    return <LockScreen isSetup />;
+    return <LockScreen key={resetKey} isSetup onReset={() => setResetKey(k => k + 1)} />;
   }
 
   if (!isAuthenticated) {
-    return <LockScreen />;
+    return <LockScreen key={resetKey} onReset={() => setResetKey(k => k + 1)} />;
   }
 
   return <ProtectedRoutes />;

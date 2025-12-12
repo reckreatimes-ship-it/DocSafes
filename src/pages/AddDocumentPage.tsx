@@ -1,6 +1,6 @@
 import React, { useState, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Upload, Camera, FileText, Image as ImageIcon, Check, ArrowRight, ScanLine } from 'lucide-react';
+import { Upload, Camera, FileText, Image as ImageIcon, Check, ArrowRight, ScanLine, Folder } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { Layout } from '@/components/Layout';
 import { Header } from '@/components/Header';
@@ -8,8 +8,9 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Scanner } from '@/components/Scanner';
+import { FolderManager } from '@/components/FolderManager';
 import { categories } from '@/lib/categories';
-import { saveDocument, Document } from '@/lib/storage';
+import { saveDocument, Document, getAllFolders, Folder as FolderType } from '@/lib/storage';
 import { useAuth } from '@/contexts/AuthContext';
 import { encryptData } from '@/lib/crypto';
 import { arrayBufferToBase64, uint8ArrayToBase64 } from '@/lib/base64';
@@ -26,10 +27,12 @@ export function AddDocumentPage() {
   const [step, setStep] = useState<Step>('select');
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [selectedCategory, setSelectedCategory] = useState<string>('');
+  const [selectedFolderId, setSelectedFolderId] = useState<string | undefined>(undefined);
   const [documentName, setDocumentName] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
   const [preview, setPreview] = useState<string | null>(null);
   const [showScanner, setShowScanner] = useState(false);
+  const [folders, setFolders] = useState<FolderType[]>([]);
 
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -100,7 +103,8 @@ export function AddDocumentPage() {
         iv: ivBase64,
         thumbnail: preview || undefined,
         createdAt: new Date(),
-        updatedAt: new Date()
+        updatedAt: new Date(),
+        folderId: selectedFolderId
       };
 
       await saveDocument(doc);
@@ -311,6 +315,30 @@ export function AddDocumentPage() {
                     placeholder="Mon document"
                     className="mt-2 h-12 bg-secondary border-0"
                   />
+                </div>
+
+                {/* Folder selection */}
+                <div>
+                  <Label className="text-foreground mb-2 block">
+                    Dossier (optionnel)
+                  </Label>
+                  <FolderManager
+                    selectedFolderId={selectedFolderId}
+                    onFolderSelect={setSelectedFolderId}
+                    mode="select"
+                  />
+                  {selectedFolderId && (
+                    <div className="mt-2 flex items-center gap-2 text-sm text-muted-foreground">
+                      <Folder className="w-4 h-4" />
+                      <span>Document sera ajouté au dossier sélectionné</span>
+                      <button 
+                        onClick={() => setSelectedFolderId(undefined)}
+                        className="text-primary hover:underline ml-auto"
+                      >
+                        Retirer
+                      </button>
+                    </div>
+                  )}
                 </div>
               </div>
 

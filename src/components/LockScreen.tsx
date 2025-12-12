@@ -1,13 +1,15 @@
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Shield, Eye, EyeOff, Fingerprint, ScanFace } from 'lucide-react';
+import { Shield, Eye, EyeOff, Fingerprint, ScanFace, HelpCircle } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
+import { ResetPassword } from '@/components/ResetPassword';
 import { cn } from '@/lib/utils';
 
 interface LockScreenProps {
   isSetup?: boolean;
+  onReset?: () => void;
 }
 
 // Validation du mot de passe: au moins 8 caractères, 1 majuscule, 1 caractère spécial AZERTY
@@ -28,7 +30,7 @@ const validatePassword = (password: string): { valid: boolean; errors: string[] 
   return { valid: errors.length === 0, errors };
 };
 
-export function LockScreen({ isSetup = false }: LockScreenProps) {
+export function LockScreen({ isSetup = false, onReset }: LockScreenProps) {
   const { login, setup, loginWithBiometrics, isBiometricsAvailable } = useAuth();
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -37,6 +39,19 @@ export function LockScreen({ isSetup = false }: LockScreenProps) {
   const [error, setError] = useState('');
   const [validationErrors, setValidationErrors] = useState<string[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+  const [showResetPassword, setShowResetPassword] = useState(false);
+
+  if (showResetPassword && !isSetup) {
+    return (
+      <ResetPassword 
+        onBack={() => setShowResetPassword(false)} 
+        onReset={() => {
+          setShowResetPassword(false);
+          onReset?.();
+        }} 
+      />
+    );
+  }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -238,6 +253,20 @@ export function LockScreen({ isSetup = false }: LockScreenProps) {
             </button>
           </div>
         </motion.div>
+      )}
+
+      {/* Forgot password link */}
+      {!isSetup && (
+        <motion.button
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ delay: 0.5 }}
+          onClick={() => setShowResetPassword(true)}
+          className="mt-6 text-sm text-muted-foreground hover:text-primary transition-colors flex items-center gap-2"
+        >
+          <HelpCircle className="w-4 h-4" />
+          Mot de passe oublié ?
+        </motion.button>
       )}
 
       {/* Loading overlay */}

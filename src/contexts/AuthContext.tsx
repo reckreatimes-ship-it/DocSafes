@@ -12,6 +12,7 @@ interface AuthContextType {
   loginWithBiometrics: () => Promise<boolean>;
   setup: (password: string) => Promise<void>;
   logout: () => void;
+  resetApp: () => Promise<void>;
   lastActivity: number;
   updateActivity: () => void;
 }
@@ -203,6 +204,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setEncryptionKey(null);
   };
 
+  const resetApp = async () => {
+    setIsAuthenticated(false);
+    setEncryptionKey(null);
+    setIsSetup(false);
+  };
+
   return (
     <AuthContext.Provider value={{
       isAuthenticated,
@@ -214,6 +221,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       loginWithBiometrics,
       setup,
       logout,
+      resetApp,
       lastActivity,
       updateActivity
     }}>

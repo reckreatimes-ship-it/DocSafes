@@ -57,7 +57,7 @@ export function HomePage() {
   return (
     <Layout>
       <Header 
-        title="DocWallet" 
+        title="DocSafe" 
         showLogo
         action={
           <button
