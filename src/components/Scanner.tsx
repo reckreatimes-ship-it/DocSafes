@@ -1,7 +1,7 @@
 import React, { useRef, useCallback, useState, useEffect } from 'react';
 import Webcam from 'react-webcam';
 import { motion } from 'framer-motion';
-import { Camera, X, RotateCcw, Check, AlertCircle } from 'lucide-react';
+import { Camera, X, RotateCcw, Check, AlertCircle, Settings } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 
 interface ScannerProps {
@@ -15,14 +15,38 @@ export function Scanner({ onCapture, onClose }: ScannerProps) {
   const [facingMode, setFacingMode] = useState<'user' | 'environment'>('environment');
   const [hasPermission, setHasPermission] = useState<boolean | null>(null);
   const [cameraError, setCameraError] = useState<string | null>(null);
+  const [isRequestingPermission, setIsRequestingPermission] = useState(false);
 
   // Check camera permission on mount
   useEffect(() => {
-    checkCameraPermission();
+    requestCameraPermission();
   }, []);
 
-  const checkCameraPermission = async () => {
+  const requestCameraPermission = async () => {
+    setIsRequestingPermission(true);
+    setCameraError(null);
+    
     try {
+      // First try using Capacitor Camera plugin for native permissions
+      try {
+        const { Camera: CapCamera } = await import('@capacitor/camera');
+        const permissions = await CapCamera.requestPermissions({ permissions: ['camera'] });
+        
+        if (permissions.camera === 'granted') {
+          setHasPermission(true);
+          setIsRequestingPermission(false);
+          return;
+        } else if (permissions.camera === 'denied') {
+          setCameraError('Accès à la caméra refusé. Ouvrez les paramètres de votre téléphone pour autoriser l\'accès.');
+          setHasPermission(false);
+          setIsRequestingPermission(false);
+          return;
+        }
+      } catch (capacitorError) {
+        console.log('Capacitor not available, using web API');
+      }
+      
+      // Fallback to web API
       const stream = await navigator.mediaDevices.getUserMedia({ 
         video: { facingMode: facingMode }
       });
@@ -33,13 +57,22 @@ export function Scanner({ onCapture, onClose }: ScannerProps) {
       console.error('Camera permission error:', error);
       setHasPermission(false);
       if (error.name === 'NotAllowedError') {
-        setCameraError('Accès à la caméra refusé. Veuillez autoriser l\'accès dans les paramètres.');
+        setCameraError('Accès à la caméra refusé. Ouvrez les paramètres de votre téléphone pour autoriser l\'accès à DocSafe.');
       } else if (error.name === 'NotFoundError') {
         setCameraError('Aucune caméra détectée sur cet appareil.');
+      } else if (error.name === 'NotReadableError') {
+        setCameraError('La caméra est utilisée par une autre application.');
       } else {
         setCameraError('Erreur lors de l\'accès à la caméra. Veuillez réessayer.');
       }
     }
+    setIsRequestingPermission(false);
+  };
+
+  const openAppSettings = () => {
+    // On native platforms, guide user to open settings
+    // This message helps users understand what to do
+    alert('Pour autoriser l\'accès à la caméra :\n\n1. Ouvrez les Paramètres de votre téléphone\n2. Allez dans Applications > DocSafe\n3. Activez la permission Caméra\n4. Revenez dans l\'application');
   };
 
   const videoConstraints = {
@@ -71,7 +104,8 @@ export function Scanner({ onCapture, onClose }: ScannerProps) {
 
   const handleUserMediaError = (error: string | DOMException) => {
     console.error('Webcam error:', error);
-    setCameraError('Impossible d\'accéder à la caméra. Vérifiez les permissions.');
+    setHasPermission(false);
+    setCameraError('Accès à la caméra refusé. Ouvrez les paramètres pour autoriser l\'accès.');
   };
 
   return (
@@ -106,13 +140,29 @@ export function Scanner({ onCapture, onClose }: ScannerProps) {
               <AlertCircle className="w-8 h-8 text-destructive" />
             </div>
             <p className="text-white max-w-xs">{cameraError}</p>
-            <Button
-              variant="outline"
-              onClick={checkCameraPermission}
-              className="bg-white/10 border-white/20 text-white hover:bg-white/20"
-            >
-              Réessayer
-            </Button>
+            <div className="flex flex-col gap-3">
+              <Button
+                variant="outline"
+                onClick={requestCameraPermission}
+                disabled={isRequestingPermission}
+                className="bg-white/10 border-white/20 text-white hover:bg-white/20"
+              >
+                {isRequestingPermission ? (
+                  <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin mr-2" />
+                ) : (
+                  <RotateCcw className="w-4 h-4 mr-2" />
+                )}
+                Réessayer
+              </Button>
+              <Button
+                variant="outline"
+                onClick={openAppSettings}
+                className="bg-white/10 border-white/20 text-white hover:bg-white/20"
+              >
+                <Settings className="w-4 h-4 mr-2" />
+                Ouvrir les paramètres
+              </Button>
+            </div>
           </div>
         ) : capturedImage ? (
           <img 
