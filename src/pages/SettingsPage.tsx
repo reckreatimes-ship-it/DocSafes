@@ -10,12 +10,15 @@ import {
   ChevronRight,
   Lock,
   Database,
-  AlertTriangle
+  AlertTriangle,
+  Fingerprint,
+  ScanFace
 } from 'lucide-react';
 import { Layout } from '@/components/Layout';
 import { Header } from '@/components/Header';
 import { Switch } from '@/components/ui/switch';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -27,6 +30,14 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from '@/components/ui/alert-dialog';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { useTheme } from '@/contexts/ThemeContext';
 import { useAuth } from '@/contexts/AuthContext';
 import { wipeAllData, getStorageStats } from '@/lib/storage';
@@ -35,9 +46,12 @@ import { cn } from '@/lib/utils';
 
 export function SettingsPage() {
   const { theme, toggleTheme } = useTheme();
-  const { logout } = useAuth();
+  const { logout, isBiometricsAvailable, biometryType, isBiometricsEnabled, enableBiometrics, disableBiometrics } = useAuth();
   const [notifications, setNotifications] = useState(true);
   const [stats, setStats] = useState({ count: 0, totalSize: 0 });
+  const [showBiometricDialog, setShowBiometricDialog] = useState(false);
+  const [biometricPassword, setBiometricPassword] = useState('');
+  const [isEnablingBiometrics, setIsEnablingBiometrics] = useState(false);
 
   useEffect(() => {
     loadStats();
@@ -69,6 +83,52 @@ export function SettingsPage() {
         variant: 'destructive'
       });
     }
+  };
+
+  const handleBiometricToggle = async (enabled: boolean) => {
+    if (enabled) {
+      setShowBiometricDialog(true);
+    } else {
+      await disableBiometrics();
+      toast({
+        title: 'Biométrie désactivée',
+        description: 'Le déverrouillage biométrique a été désactivé.'
+      });
+    }
+  };
+
+  const handleEnableBiometrics = async () => {
+    if (!biometricPassword) return;
+    
+    setIsEnablingBiometrics(true);
+    const success = await enableBiometrics(biometricPassword);
+    setIsEnablingBiometrics(false);
+    
+    if (success) {
+      setShowBiometricDialog(false);
+      setBiometricPassword('');
+      toast({
+        title: 'Biométrie activée',
+        description: 'Vous pouvez maintenant déverrouiller avec votre empreinte ou Face ID.'
+      });
+    } else {
+      toast({
+        title: 'Erreur',
+        description: 'Mot de passe incorrect.',
+        variant: 'destructive'
+      });
+    }
+  };
+
+  const getBiometricLabel = () => {
+    if (biometryType === 'faceId') return 'Face ID';
+    if (biometryType === 'fingerprint') return 'Empreinte digitale';
+    return 'Biométrie';
+  };
+
+  const getBiometricIcon = () => {
+    if (biometryType === 'faceId') return ScanFace;
+    return Fingerprint;
   };
 
   const SettingItem = ({ 
@@ -164,8 +224,74 @@ export function SettingsPage() {
                 </div>
               }
             />
+            {isBiometricsAvailable && (
+              <>
+                <div className="h-px bg-border mx-4" />
+                <SettingItem
+                  icon={getBiometricIcon()}
+                  label={getBiometricLabel()}
+                  description="Déverrouiller avec la biométrie"
+                  action={
+                    <Switch
+                      checked={isBiometricsEnabled}
+                      onCheckedChange={handleBiometricToggle}
+                    />
+                  }
+                />
+              </>
+            )}
           </div>
         </motion.section>
+
+        {/* Biometric Dialog */}
+        <Dialog open={showBiometricDialog} onOpenChange={setShowBiometricDialog}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2">
+                {biometryType === 'faceId' ? (
+                  <ScanFace className="w-5 h-5 text-primary" />
+                ) : (
+                  <Fingerprint className="w-5 h-5 text-primary" />
+                )}
+                Activer {getBiometricLabel()}
+              </DialogTitle>
+              <DialogDescription>
+                Entrez votre mot de passe pour activer le déverrouillage biométrique.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="py-4">
+              <Input
+                type="password"
+                placeholder="Votre mot de passe"
+                value={biometricPassword}
+                onChange={(e) => setBiometricPassword(e.target.value)}
+                className="h-12"
+              />
+            </div>
+            <DialogFooter>
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setShowBiometricDialog(false);
+                  setBiometricPassword('');
+                }}
+              >
+                Annuler
+              </Button>
+              <Button
+                onClick={handleEnableBiometrics}
+                disabled={!biometricPassword || isEnablingBiometrics}
+                className="gradient-primary"
+              >
+                {isEnablingBiometrics ? (
+                  <div className="w-4 h-4 border-2 border-primary-foreground border-t-transparent rounded-full animate-spin" />
+                ) : (
+                  'Activer'
+                )}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
 
         {/* Appearance Section */}
         <motion.section

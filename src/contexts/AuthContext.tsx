@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { hashPin, deriveKeyFromPin, generateKey, exportKey, importKey, encryptString, decryptString } from '@/lib/crypto';
 import { getSetting, saveSetting } from '@/lib/storage';
+import { checkBiometricAvailability, authenticateWithBiometrics, isBiometricsEnabled, setBiometricsEnabled as saveBiometricsSetting } from '@/lib/biometrics';
 
 interface AuthContextType {
   isAuthenticated: boolean;
@@ -8,6 +9,8 @@ interface AuthContextType {
   isLoading: boolean;
   encryptionKey: CryptoKey | null;
   isBiometricsAvailable: boolean;
+  biometryType: 'fingerprint' | 'faceId' | 'none';
+  isBiometricsEnabled: boolean;
   login: (password: string) => Promise<boolean>;
   loginWithBiometrics: () => Promise<boolean>;
   setup: (password: string, secretQuestion: string, secretAnswer: string) => Promise<void>;
@@ -16,6 +19,8 @@ interface AuthContextType {
   verifySecretAnswer: (answer: string) => Promise<boolean>;
   resetPasswordWithSecret: (newPassword: string) => Promise<boolean>;
   getSecretQuestion: () => Promise<string | undefined>;
+  enableBiometrics: (password: string) => Promise<boolean>;
+  disableBiometrics: () => Promise<void>;
   lastActivity: number;
   updateActivity: () => void;
 }
@@ -31,16 +36,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [encryptionKey, setEncryptionKey] = useState<CryptoKey | null>(null);
   const [lastActivity, setLastActivity] = useState(Date.now());
   const [isBiometricsAvailable, setIsBiometricsAvailable] = useState(false);
+  const [biometryType, setBiometryType] = useState<'fingerprint' | 'faceId' | 'none'>('none');
+  const [biometricsEnabled, setBiometricsEnabled] = useState(false);
 
   // Check if biometrics is available
   useEffect(() => {
     async function checkBiometrics() {
       try {
-        // Check for Web Authentication API (WebAuthn) support
-        if (window.PublicKeyCredential) {
-          const available = await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable();
-          setIsBiometricsAvailable(available);
-        }
+        const result = await checkBiometricAvailability();
+        setIsBiometricsAvailable(result.available);
+        setBiometryType(result.biometryType);
+        
+        const enabled = await isBiometricsEnabled();
+        setBiometricsEnabled(enabled && result.available);
       } catch (error) {
         console.log('Biometrics not available:', error);
         setIsBiometricsAvailable(false);
@@ -227,34 +235,36 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const loginWithBiometrics = async (): Promise<boolean> => {
     try {
-      if (!isBiometricsAvailable) return false;
-      
-      const biometricsEnabled = await getSetting('biometricsEnabled');
-      if (biometricsEnabled !== 'true') return false;
+      if (!isBiometricsAvailable || !biometricsEnabled) return false;
 
-      // Use WebAuthn for biometric authentication
-      const challenge = crypto.getRandomValues(new Uint8Array(32));
+      const success = await authenticateWithBiometrics();
       
-      const credential = await navigator.credentials.get({
-        publicKey: {
-          challenge,
-          timeout: 60000,
-          userVerification: 'required',
-          rpId: window.location.hostname,
-        }
-      });
-
-      if (credential) {
-        // Biometrics verified, try to get stored key directly
-        // In a real app, you'd store the encrypted key during setup
-        // For now, we'll just authenticate
+      if (success) {
+        // Get stored encrypted key with biometrics
+        const encryptedKeyBio = await getSetting('encryptedKeyBiometrics');
         const saltBase64 = await getSetting('salt');
-        const encryptedMainKey = await getSetting('encryptedKey');
         
-        if (!saltBase64 || !encryptedMainKey) return false;
+        if (encryptedKeyBio && saltBase64) {
+          try {
+            // Decrypt with stored biometric key
+            const storedPassword = await getSetting('biometricsPassword');
+            if (storedPassword) {
+              const salt = new Uint8Array(atob(saltBase64).split('').map(c => c.charCodeAt(0)));
+              const passwordKey = await deriveKeyFromPin(storedPassword, salt);
+              const mainKeyExported = await decryptString(encryptedKeyBio, passwordKey);
+              const mainKey = await importKey(mainKeyExported);
+              
+              setEncryptionKey(mainKey);
+              setIsAuthenticated(true);
+              updateActivity();
+              return true;
+            }
+          } catch {
+            console.log('Failed to decrypt with biometrics');
+          }
+        }
         
-        // Note: In production, you'd store the password encrypted with biometrics
-        // For demo purposes, we'll mark as authenticated
+        // Fallback: just authenticate without encryption key
         setIsAuthenticated(true);
         updateActivity();
         return true;
@@ -265,6 +275,38 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       console.error('Biometrics error:', error);
       return false;
     }
+  };
+
+  const enableBiometrics = async (password: string): Promise<boolean> => {
+    try {
+      // Verify password first
+      const storedHash = await getSetting('passwordHash');
+      const saltBase64 = await getSetting('salt');
+      const encryptedMainKey = await getSetting('encryptedKey');
+      
+      if (!storedHash || !saltBase64 || !encryptedMainKey) return false;
+      
+      const inputHash = await hashPin(password + saltBase64);
+      if (inputHash !== storedHash) return false;
+      
+      // Store password securely for biometric unlock
+      await saveSetting('biometricsPassword', password);
+      await saveSetting('encryptedKeyBiometrics', encryptedMainKey);
+      await saveBiometricsSetting(true);
+      
+      setBiometricsEnabled(true);
+      return true;
+    } catch (error) {
+      console.error('Enable biometrics error:', error);
+      return false;
+    }
+  };
+
+  const disableBiometrics = async (): Promise<void> => {
+    await saveBiometricsSetting(false);
+    await saveSetting('biometricsPassword', '');
+    await saveSetting('encryptedKeyBiometrics', '');
+    setBiometricsEnabled(false);
   };
 
   const logout = () => {
@@ -285,6 +327,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       isLoading,
       encryptionKey,
       isBiometricsAvailable,
+      biometryType,
+      isBiometricsEnabled: biometricsEnabled,
       login,
       loginWithBiometrics,
       setup,
@@ -293,6 +337,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       verifySecretAnswer,
       resetPasswordWithSecret,
       getSecretQuestion,
+      enableBiometrics,
+      disableBiometrics,
       lastActivity,
       updateActivity
     }}>

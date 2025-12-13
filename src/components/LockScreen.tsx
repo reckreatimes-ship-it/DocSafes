@@ -42,7 +42,7 @@ const validatePassword = (password: string): { valid: boolean; errors: string[] 
 type SetupStep = 'password' | 'confirm' | 'secret';
 
 export function LockScreen({ isSetup = false, onReset }: LockScreenProps) {
-  const { login, setup, loginWithBiometrics, isBiometricsAvailable } = useAuth();
+  const { login, setup, loginWithBiometrics, isBiometricsAvailable, biometryType, isBiometricsEnabled } = useAuth();
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [setupStep, setSetupStep] = useState<SetupStep>('password');
@@ -306,7 +306,7 @@ export function LockScreen({ isSetup = false, onReset }: LockScreenProps) {
       </motion.form>
 
       {/* Biometric options */}
-      {!isSetup && isBiometricsAvailable && (
+      {!isSetup && isBiometricsAvailable && isBiometricsEnabled && (
         <motion.div
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
@@ -315,22 +315,26 @@ export function LockScreen({ isSetup = false, onReset }: LockScreenProps) {
         >
           <p className="text-sm text-muted-foreground">ou utilisez</p>
           <div className="flex gap-4">
-            <button
-              onClick={handleBiometrics}
-              disabled={isLoading}
-              className="flex flex-col items-center gap-2 p-4 rounded-xl bg-secondary hover:bg-secondary/80 transition-colors disabled:opacity-50"
-            >
-              <Fingerprint className="w-8 h-8 text-primary" />
-              <span className="text-xs text-muted-foreground">Empreinte</span>
-            </button>
-            <button
-              onClick={handleBiometrics}
-              disabled={isLoading}
-              className="flex flex-col items-center gap-2 p-4 rounded-xl bg-secondary hover:bg-secondary/80 transition-colors disabled:opacity-50"
-            >
-              <ScanFace className="w-8 h-8 text-primary" />
-              <span className="text-xs text-muted-foreground">Face ID</span>
-            </button>
+            {(biometryType === 'fingerprint' || biometryType === 'none') && (
+              <button
+                onClick={handleBiometrics}
+                disabled={isLoading}
+                className="flex flex-col items-center gap-2 p-4 rounded-xl bg-secondary hover:bg-secondary/80 transition-colors disabled:opacity-50"
+              >
+                <Fingerprint className="w-8 h-8 text-primary" />
+                <span className="text-xs text-muted-foreground">Empreinte</span>
+              </button>
+            )}
+            {(biometryType === 'faceId' || biometryType === 'none') && (
+              <button
+                onClick={handleBiometrics}
+                disabled={isLoading}
+                className="flex flex-col items-center gap-2 p-4 rounded-xl bg-secondary hover:bg-secondary/80 transition-colors disabled:opacity-50"
+              >
+                <ScanFace className="w-8 h-8 text-primary" />
+                <span className="text-xs text-muted-foreground">Face ID</span>
+              </button>
+            )}
           </div>
         </motion.div>
       )}
