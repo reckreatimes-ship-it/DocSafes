@@ -1,7 +1,7 @@
 // Android permissions management utilities for Capacitor
 import { Camera, CameraResultType, CameraSource, PermissionStatus } from '@capacitor/camera';
 
-export type PermissionType = 'camera' | 'photos' | 'storage';
+export type PermissionType = 'camera' | 'photos' | 'storage' | 'biometrics';
 
 export interface PermissionResult {
   granted: boolean;
@@ -14,6 +14,7 @@ export interface PermissionsState {
   camera: PermissionResult;
   photos: PermissionResult;
   storage: PermissionResult;
+  biometrics: PermissionResult;
 }
 
 /**
@@ -34,7 +35,8 @@ export async function checkPermissions(): Promise<PermissionsState> {
     return {
       camera: mapCapacitorPermission(cameraPermissions.camera),
       photos: mapCapacitorPermission(cameraPermissions.photos),
-      storage: await checkStoragePermission()
+      storage: await checkStoragePermission(),
+      biometrics: await checkBiometricPermission()
     };
   } catch (error) {
     console.log('Capacitor not available, using web fallback');
@@ -42,7 +44,8 @@ export async function checkPermissions(): Promise<PermissionsState> {
     return {
       camera: await checkWebCameraPermission(),
       photos: { ...defaultResult, granted: true }, // Web doesn't need photo library permission
-      storage: { ...defaultResult, granted: 'indexedDB' in window }
+      storage: { ...defaultResult, granted: 'indexedDB' in window },
+      biometrics: await checkBiometricPermission()
     };
   }
 }
@@ -135,6 +138,58 @@ async function checkStoragePermission(): Promise<PermissionResult> {
 }
 
 /**
+ * Check biometric permission and availability
+ */
+async function checkBiometricPermission(): Promise<PermissionResult> {
+  try {
+    // Check if WebAuthn/biometrics is available
+    if (window.PublicKeyCredential) {
+      const available = await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable();
+      return {
+        granted: available,
+        denied: !available,
+        permanentlyDenied: false,
+        canRequest: false // Biometrics is either available or not, no runtime permission needed
+      };
+    }
+  } catch (error) {
+    console.log('Biometric check error:', error);
+  }
+  
+  return {
+    granted: false,
+    denied: true,
+    permanentlyDenied: false,
+    canRequest: false
+  };
+}
+
+/**
+ * Get biometric type available on device
+ */
+export async function getBiometricType(): Promise<'fingerprint' | 'faceId' | 'none'> {
+  try {
+    if (window.PublicKeyCredential) {
+      const available = await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable();
+      if (available) {
+        // On iOS, check for Face ID vs Touch ID
+        const isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent);
+        if (isIOS) {
+          // iPhone X and later use Face ID, older use Touch ID
+          const hasFaceID = window.screen.height >= 812 && window.devicePixelRatio >= 3;
+          return hasFaceID ? 'faceId' : 'fingerprint';
+        }
+        // Android typically uses fingerprint
+        return 'fingerprint';
+      }
+    }
+  } catch (error) {
+    console.log('Error detecting biometric type:', error);
+  }
+  return 'none';
+}
+
+/**
  * Request camera permission
  */
 export async function requestCameraPermission(): Promise<PermissionResult> {
@@ -219,8 +274,9 @@ export async function requestAllPermissions(): Promise<PermissionsState> {
   const camera = await requestCameraPermission();
   const photos = await requestPhotosPermission();
   const storage = await checkStoragePermission();
+  const biometrics = await checkBiometricPermission();
   
-  return { camera, photos, storage };
+  return { camera, photos, storage, biometrics };
 }
 
 /**
@@ -244,7 +300,11 @@ export function openAppSettings(): void {
 5. Activez les permissions nécessaires :
    • Caméra
    • Photos et médias (ou Stockage)
+   • Biométrie (empreinte/visage)
 6. Revenez dans l'application
+
+Pour la biométrie :
+• Assurez-vous d'avoir configuré une empreinte ou Face unlock dans les paramètres de sécurité de votre téléphone
 
 Android ${getAndroidVersion() || ''} détecté`;
   } else if (isIOS) {
@@ -255,7 +315,11 @@ Android ${getAndroidVersion() || ''} détecté`;
 3. Activez les permissions nécessaires :
    • Appareil photo
    • Photos
-4. Revenez dans l'application`;
+   • Face ID ou Touch ID
+4. Revenez dans l'application
+
+Pour la biométrie :
+• Assurez-vous que Face ID ou Touch ID est configuré dans Réglages > Face ID et code`;
   } else {
     instructions = `Pour autoriser les permissions :
 
@@ -287,6 +351,8 @@ export function getPermissionExplanation(type: PermissionType): string {
       return 'L\'accès aux photos permet d\'importer des documents depuis votre galerie.';
     case 'storage':
       return 'Le stockage local permet de sauvegarder vos documents de manière sécurisée sur votre appareil.';
+    case 'biometrics':
+      return 'L\'authentification biométrique (empreinte digitale ou reconnaissance faciale) permet de déverrouiller l\'application de manière sécurisée et rapide.';
     default:
       return '';
   }

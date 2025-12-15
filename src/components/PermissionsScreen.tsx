@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Camera, FolderOpen, Shield, ChevronRight, Check, X, Settings, AlertTriangle, Image } from 'lucide-react';
+import { Camera, FolderOpen, Shield, ChevronRight, Check, X, Settings, AlertTriangle, Image, Fingerprint } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { getSetting, saveSetting } from '@/lib/storage';
 import { 
@@ -10,15 +10,16 @@ import {
   openAppSettings,
   getPermissionExplanation,
   getPlatform,
+  getBiometricType,
   type PermissionResult
 } from '@/lib/permissions';
 
 interface Permission {
-  id: 'camera' | 'photos' | 'storage';
+  id: 'camera' | 'photos' | 'storage' | 'biometrics';
   name: string;
   description: string;
   icon: React.ReactNode;
-  status: 'pending' | 'granted' | 'denied' | 'permanently_denied';
+  status: 'pending' | 'granted' | 'denied' | 'permanently_denied' | 'unavailable';
   required: boolean;
 }
 
@@ -51,6 +52,14 @@ export function PermissionsScreen({ onComplete }: PermissionsScreenProps) {
       icon: <FolderOpen className="w-6 h-6" />,
       status: 'pending',
       required: true
+    },
+    {
+      id: 'biometrics',
+      name: 'Empreinte / Face ID',
+      description: 'Déverrouiller l\'app avec votre empreinte ou visage',
+      icon: <Fingerprint className="w-6 h-6" />,
+      status: 'pending',
+      required: false
     }
   ]);
   const [currentStep, setCurrentStep] = useState(0);
@@ -62,6 +71,18 @@ export function PermissionsScreen({ onComplete }: PermissionsScreenProps) {
   useEffect(() => {
     async function init() {
       setPlatform(getPlatform());
+      
+      // Update biometric permission name based on device capability
+      const biometricType = await getBiometricType();
+      if (biometricType !== 'none') {
+        const biometricName = biometricType === 'faceId' ? 'Face ID' : 'Empreinte digitale';
+        setPermissions(prev => prev.map(p => 
+          p.id === 'biometrics' 
+            ? { ...p, name: biometricName, description: `Déverrouiller l'app avec ${biometricType === 'faceId' ? 'votre visage' : 'votre empreinte'}` }
+            : p
+        ));
+      }
+      
       await checkCurrentPermissions();
     }
     init();
@@ -75,20 +96,26 @@ export function PermissionsScreen({ onComplete }: PermissionsScreenProps) {
         const state = currentState[p.id as keyof typeof currentState];
         let status: Permission['status'] = 'pending';
         
-        if (state.granted) {
-          status = 'granted';
-        } else if (state.permanentlyDenied) {
-          status = 'permanently_denied';
-        } else if (state.denied) {
-          status = 'denied';
+        if (p.id === 'biometrics') {
+          // Biometrics is either available or not
+          status = state.granted ? 'granted' : 'unavailable';
+        } else {
+          if (state.granted) {
+            status = 'granted';
+          } else if (state.permanentlyDenied) {
+            status = 'permanently_denied';
+          } else if (state.denied) {
+            status = 'denied';
+          }
         }
         
         return { ...p, status };
       }));
 
-      // Find first pending permission
+      // Find first pending permission (skip biometrics if unavailable)
       const firstPending = permissions.findIndex(p => {
         const state = currentState[p.id as keyof typeof currentState];
+        if (p.id === 'biometrics') return false; // Biometrics doesn't need explicit permission request
         return !state.granted;
       });
       
@@ -136,6 +163,10 @@ export function PermissionsScreen({ onComplete }: PermissionsScreenProps) {
           // Storage uses IndexedDB, always available on web
           result = { granted: true, denied: false, permanentlyDenied: false, canRequest: false };
           break;
+        case 'biometrics':
+          // Biometrics doesn't need runtime permission, it's either available or not
+          result = { granted: true, denied: false, permanentlyDenied: false, canRequest: false };
+          break;
         default:
           result = { granted: false, denied: true, permanentlyDenied: false, canRequest: false };
       }
@@ -178,7 +209,9 @@ export function PermissionsScreen({ onComplete }: PermissionsScreenProps) {
     onComplete();
   };
 
-  const allPermissionsHandled = permissions.every(p => p.status !== 'pending');
+  const allPermissionsHandled = permissions.every(p => 
+    p.status !== 'pending' || p.id === 'biometrics'
+  );
   const hasAnyGranted = permissions.some(p => p.status === 'granted');
   const hasPermanentlyDenied = permissions.some(p => p.status === 'permanently_denied');
   const currentPermission = permissions[currentStep];
@@ -191,6 +224,8 @@ export function PermissionsScreen({ onComplete }: PermissionsScreenProps) {
         return <X className="w-6 h-6" />;
       case 'permanently_denied':
         return <AlertTriangle className="w-6 h-6" />;
+      case 'unavailable':
+        return <X className="w-6 h-6" />;
       default:
         return null;
     }
@@ -204,6 +239,8 @@ export function PermissionsScreen({ onComplete }: PermissionsScreenProps) {
         return 'bg-amber-500/20 text-amber-500';
       case 'permanently_denied':
         return 'bg-destructive/20 text-destructive';
+      case 'unavailable':
+        return 'bg-muted/50 text-muted-foreground';
       default:
         return 'bg-primary/20 text-primary';
     }
@@ -286,6 +323,12 @@ export function PermissionsScreen({ onComplete }: PermissionsScreenProps) {
                 {permission.status === 'permanently_denied' && (
                   <p className="text-xs text-destructive mt-1">
                     Permission refusée définitivement
+                  </p>
+                )}
+                
+                {permission.status === 'unavailable' && permission.id === 'biometrics' && (
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Non disponible sur cet appareil
                   </p>
                 )}
               </div>
