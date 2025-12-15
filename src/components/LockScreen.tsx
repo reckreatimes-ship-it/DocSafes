@@ -305,37 +305,39 @@ export function LockScreen({ isSetup = false, onReset }: LockScreenProps) {
         )}
       </motion.form>
 
-      {/* Biometric options */}
+      {/* Biometric button - visible and prominent */}
       {!isSetup && isBiometricsAvailable && isBiometricsEnabled && (
         <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ delay: 0.4 }}
-          className="mt-6 flex flex-col items-center gap-4"
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.3 }}
+          className="w-full max-w-sm mt-4"
         >
-          <p className="text-sm text-muted-foreground">ou utilisez</p>
-          <div className="flex gap-4">
-            {(biometryType === 'fingerprint' || biometryType === 'none') && (
-              <button
-                onClick={handleBiometrics}
-                disabled={isLoading}
-                className="flex flex-col items-center gap-2 p-4 rounded-xl bg-secondary hover:bg-secondary/80 transition-colors disabled:opacity-50"
-              >
-                <Fingerprint className="w-8 h-8 text-primary" />
-                <span className="text-xs text-muted-foreground">Empreinte</span>
-              </button>
-            )}
-            {(biometryType === 'faceId' || biometryType === 'none') && (
-              <button
-                onClick={handleBiometrics}
-                disabled={isLoading}
-                className="flex flex-col items-center gap-2 p-4 rounded-xl bg-secondary hover:bg-secondary/80 transition-colors disabled:opacity-50"
-              >
-                <ScanFace className="w-8 h-8 text-primary" />
-                <span className="text-xs text-muted-foreground">Face ID</span>
-              </button>
-            )}
+          <div className="relative flex items-center gap-4 my-2">
+            <div className="flex-1 h-px bg-border" />
+            <span className="text-xs text-muted-foreground">ou</span>
+            <div className="flex-1 h-px bg-border" />
           </div>
+          
+          <Button
+            type="button"
+            variant="outline"
+            onClick={handleBiometrics}
+            disabled={isLoading}
+            className="w-full h-14 text-base border-primary/30 hover:border-primary hover:bg-primary/5 transition-all"
+          >
+            {biometryType === 'faceId' ? (
+              <>
+                <ScanFace className="w-6 h-6 mr-3 text-primary" />
+                Déverrouiller avec Face ID
+              </>
+            ) : (
+              <>
+                <Fingerprint className="w-6 h-6 mr-3 text-primary" />
+                Déverrouiller avec Empreinte
+              </>
+            )}
+          </Button>
         </motion.div>
       )}
 
