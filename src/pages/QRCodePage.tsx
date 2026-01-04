@@ -7,13 +7,14 @@ import { Layout } from '@/components/Layout';
 import { Header } from '@/components/Header';
 import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/EmptyState';
-import { getDocument, Document } from '@/lib/storage';
+import { getDocument, Document, getSetting } from '@/lib/storage';
 import { getCategoryById } from '@/lib/categories';
 import { useAuth } from '@/contexts/AuthContext';
 import { decryptData } from '@/lib/crypto';
 import { base64ToArrayBuffer, base64ToUint8Array, arrayBufferToBase64 } from '@/lib/base64';
 
 const MAX_QR_SIZE = 2000; // Maximum characters for QR code
+const DEFAULT_DURATION = 60; // Default 60 seconds
 
 export function QRCodePage() {
   const { documentId } = useParams<{ documentId: string }>();
@@ -22,7 +23,8 @@ export function QRCodePage() {
   const [document, setDocument] = useState<Document | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [qrValue, setQrValue] = useState<string>('');
-  const [timeLeft, setTimeLeft] = useState(60);
+  const [duration, setDuration] = useState(DEFAULT_DURATION);
+  const [timeLeft, setTimeLeft] = useState(DEFAULT_DURATION);
   const [isExpired, setIsExpired] = useState(false);
   const [isTooLarge, setIsTooLarge] = useState(false);
   const [token, setToken] = useState<string>('');
@@ -51,11 +53,17 @@ export function QRCodePage() {
     if (!documentId || !encryptionKey) return;
 
     try {
+      // Load QR duration setting
+      const savedDuration = await getSetting('qrDuration');
+      const qrDuration = savedDuration ? parseInt(savedDuration) : DEFAULT_DURATION;
+      setDuration(qrDuration);
+      setTimeLeft(qrDuration);
+
       const doc = await getDocument(documentId);
       setDocument(doc || null);
       
       if (doc) {
-        await generateQRCode(doc);
+        await generateQRCode(doc, qrDuration);
       }
     } catch (error) {
       console.error('Error loading document:', error);
@@ -64,7 +72,7 @@ export function QRCodePage() {
     }
   };
 
-  const generateQRCode = async (doc: Document) => {
+  const generateQRCode = async (doc: Document, qrDuration: number = duration) => {
     try {
       // Decrypt the document data
       const encryptedBuffer = base64ToArrayBuffer(doc.encryptedData);
@@ -84,7 +92,7 @@ export function QRCodePage() {
       };
       
       const encodedData = btoa(JSON.stringify(shareData));
-      const expiryTime = Date.now() + 60000; // 60 seconds
+      const expiryTime = Date.now() + (qrDuration * 1000);
       
       // Build the URL
       const baseUrl = window.location.origin;
@@ -102,16 +110,19 @@ export function QRCodePage() {
         setQrValue(shareUrl);
       }
       
-      setTimeLeft(60);
+      setTimeLeft(qrDuration);
       setIsExpired(false);
     } catch (error) {
       console.error('Error generating QR code:', error);
     }
   };
 
-  const regenerateQR = () => {
+  const regenerateQR = async () => {
     if (document && encryptionKey) {
-      generateQRCode(document);
+      const savedDuration = await getSetting('qrDuration');
+      const qrDuration = savedDuration ? parseInt(savedDuration) : DEFAULT_DURATION;
+      setDuration(qrDuration);
+      generateQRCode(document, qrDuration);
     }
   };
 

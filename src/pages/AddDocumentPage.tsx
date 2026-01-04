@@ -1,6 +1,6 @@
 import React, { useState, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Upload, Camera, FileText, Image as ImageIcon, Check, ArrowRight, ScanLine, Folder } from 'lucide-react';
+import { Upload, Camera, FileText, Image as ImageIcon, Check, ArrowRight, ScanLine, Folder, Files } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { Layout } from '@/components/Layout';
 import { Header } from '@/components/Header';
@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Scanner } from '@/components/Scanner';
+import { MultiPageScanner } from '@/components/MultiPageScanner';
 import { FolderManager } from '@/components/FolderManager';
 import { categories } from '@/lib/categories';
 import { saveDocument, Document, getAllFolders, Folder as FolderType } from '@/lib/storage';
@@ -32,6 +33,7 @@ export function AddDocumentPage() {
   const [isProcessing, setIsProcessing] = useState(false);
   const [preview, setPreview] = useState<string | null>(null);
   const [showScanner, setShowScanner] = useState(false);
+  const [showMultiPageScanner, setShowMultiPageScanner] = useState(false);
   const [folders, setFolders] = useState<FolderType[]>([]);
 
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -72,6 +74,14 @@ export function AddDocumentPage() {
     setSelectedFile(file);
     setDocumentName(`Scan du ${new Date().toLocaleDateString('fr-FR')}`);
     setPreview(imageSrc);
+    setStep('category');
+  };
+
+  const handleMultiPageComplete = (file: File, preview: string) => {
+    setShowMultiPageScanner(false);
+    setSelectedFile(file);
+    setDocumentName(`Document ${new Date().toLocaleDateString('fr-FR')}`);
+    setPreview(preview);
     setStep('category');
   };
 
@@ -164,7 +174,7 @@ export function AddDocumentPage() {
                   </div>
                 </button>
 
-                {/* Scanner */}
+                {/* Scanner - single page */}
                 <button
                   onClick={() => setShowScanner(true)}
                   className="flex flex-col items-center gap-4 p-6 bg-card rounded-2xl border border-border hover:border-primary/50 transition-all"
@@ -174,11 +184,25 @@ export function AddDocumentPage() {
                   </div>
                   <div className="text-center">
                     <p className="font-medium text-foreground">Scanner</p>
-                    <p className="text-sm text-muted-foreground">Numériser</p>
+                    <p className="text-sm text-muted-foreground">Une page</p>
                   </div>
                 </button>
 
-                {/* Quick photo */}
+                {/* Multi-page scanner */}
+                <button
+                  onClick={() => setShowMultiPageScanner(true)}
+                  className="flex flex-col items-center gap-4 p-6 bg-card rounded-2xl border border-border hover:border-primary/50 transition-all"
+                >
+                  <div className="w-16 h-16 rounded-2xl bg-primary/10 flex items-center justify-center">
+                    <Files className="w-8 h-8 text-primary" />
+                  </div>
+                  <div className="text-center">
+                    <p className="font-medium text-foreground">Multi-pages</p>
+                    <p className="text-sm text-muted-foreground">Créer un PDF</p>
+                  </div>
+                </button>
+
+                {/* Quick photo - now col-span-2 to fill the row */}
                 <button
                   onClick={() => {
                     if (fileInputRef.current) {
@@ -187,14 +211,14 @@ export function AddDocumentPage() {
                       fileInputRef.current.click();
                     }
                   }}
-                  className="flex flex-col items-center gap-4 p-6 bg-card rounded-2xl border border-border hover:border-primary/50 transition-all col-span-2"
+                  className="flex flex-col items-center gap-4 p-6 bg-card rounded-2xl border border-border hover:border-primary/50 transition-all"
                 >
                   <div className="w-16 h-16 rounded-2xl bg-primary/10 flex items-center justify-center">
                     <Camera className="w-8 h-8 text-primary" />
                   </div>
                   <div className="text-center">
-                    <p className="font-medium text-foreground">Photo rapide</p>
-                    <p className="text-sm text-muted-foreground">Prendre une photo directement</p>
+                    <p className="font-medium text-foreground">Photo</p>
+                    <p className="text-sm text-muted-foreground">Rapide</p>
                   </div>
                 </button>
               </div>
@@ -380,6 +404,16 @@ export function AddDocumentPage() {
           <Scanner 
             onCapture={handleScanCapture}
             onClose={() => setShowScanner(false)}
+          />
+        )}
+      </AnimatePresence>
+
+      {/* Multi-page scanner overlay */}
+      <AnimatePresence>
+        {showMultiPageScanner && (
+          <MultiPageScanner 
+            onComplete={handleMultiPageComplete}
+            onClose={() => setShowMultiPageScanner(false)}
           />
         )}
       </AnimatePresence>
