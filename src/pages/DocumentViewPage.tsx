@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
-import { Share2, Trash2, Download, QrCode, FileText, Edit2, Check, X } from 'lucide-react';
+import { Share2, Trash2, Download, QrCode, FileText, Edit2, Check, X, FolderOpen } from 'lucide-react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { Document, Page, pdfjs } from 'react-pdf';
 import 'react-pdf/dist/esm/Page/AnnotationLayer.css';
@@ -11,10 +11,11 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { EmptyState } from '@/components/EmptyState';
 import { getDocument, deleteDocument, updateDocument, Document as DocType } from '@/lib/storage';
-import { getCategoryById } from '@/lib/categories';
+import { getCategoryById, categories } from '@/lib/categories';
 import { useAuth } from '@/contexts/AuthContext';
 import { decryptData } from '@/lib/crypto';
 import { toast } from '@/hooks/use-toast';
+import { cn } from '@/lib/utils';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -26,6 +27,12 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from '@/components/ui/alert-dialog';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 
 // Configure PDF.js worker
 pdfjs.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`;
@@ -40,6 +47,7 @@ export function DocumentViewPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [isEditing, setIsEditing] = useState(false);
   const [newName, setNewName] = useState('');
+  const [showCategoryDialog, setShowCategoryDialog] = useState(false);
   
   // PDF state
   const [numPages, setNumPages] = useState<number | null>(null);
@@ -127,6 +135,26 @@ export function DocumentViewPage() {
   const handleShare = () => {
     if (document) {
       navigate(`/share/${document.id}`);
+    }
+  };
+
+  const handleChangeCategory = async (newCategoryId: string) => {
+    if (!documentId) return;
+
+    try {
+      await updateDocument(documentId, { category: newCategoryId });
+      setDocument(prev => prev ? { ...prev, category: newCategoryId } : null);
+      setShowCategoryDialog(false);
+      toast({
+        title: 'Catégorie modifiée',
+        description: 'Le document a été déplacé.'
+      });
+    } catch (error) {
+      toast({
+        title: 'Erreur',
+        description: 'Impossible de modifier la catégorie.',
+        variant: 'destructive'
+      });
     }
   };
 
@@ -323,15 +351,18 @@ export function DocumentViewPage() {
         <div className="space-y-3">
           <div className="flex items-center gap-3">
             {category && (
-              <div 
-                className="px-3 py-1 rounded-full text-sm font-medium"
+              <button
+                onClick={() => setShowCategoryDialog(true)}
+                className="flex items-center gap-2 px-3 py-1 rounded-full text-sm font-medium hover:opacity-80 transition-opacity"
                 style={{ 
                   backgroundColor: category.color + '20',
                   color: category.color
                 }}
               >
+                <category.icon className="w-4 h-4" />
                 {category.name}
-              </div>
+                <FolderOpen className="w-3 h-3 ml-1" />
+              </button>
             )}
             <span className="text-sm text-muted-foreground">
               {(document.size / 1024).toFixed(1)} KB
@@ -346,6 +377,47 @@ export function DocumentViewPage() {
             }).format(new Date(document.createdAt))}
           </p>
         </div>
+
+        {/* Change category dialog */}
+        <Dialog open={showCategoryDialog} onOpenChange={setShowCategoryDialog}>
+          <DialogContent className="max-w-md max-h-[80vh] overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle>Déplacer vers une catégorie</DialogTitle>
+            </DialogHeader>
+            <div className="grid grid-cols-2 gap-2 py-4">
+              {categories.map((cat) => {
+                const Icon = cat.icon;
+                const isSelected = document.category === cat.id;
+                
+                return (
+                  <button
+                    key={cat.id}
+                    onClick={() => handleChangeCategory(cat.id)}
+                    className={cn(
+                      "flex items-center gap-2 p-3 rounded-xl border transition-all text-left",
+                      isSelected 
+                        ? "border-primary bg-primary/10" 
+                        : "border-border bg-card hover:border-primary/30"
+                    )}
+                  >
+                    <div 
+                      className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0"
+                      style={{ backgroundColor: cat.color + '20', color: cat.color }}
+                    >
+                      <Icon className="w-4 h-4" />
+                    </div>
+                    <span className="font-medium text-foreground text-xs truncate">
+                      {cat.name}
+                    </span>
+                    {isSelected && (
+                      <Check className="w-4 h-4 text-primary ml-auto shrink-0" />
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          </DialogContent>
+        </Dialog>
 
         {/* Actions */}
         <div className="grid grid-cols-3 gap-3">

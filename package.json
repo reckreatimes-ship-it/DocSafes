@@ -50,6 +50,7 @@
     "framer-motion": "^12.23.25",
     "idb": "^8.0.3",
     "input-otp": "^1.4.2",
+    "jspdf": "^4.0.0",
     "lucide-react": "^0.462.0",
     "next-themes": "^0.3.0",
     "qrcode.react": "^4.2.0",

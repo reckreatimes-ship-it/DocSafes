@@ -12,7 +12,10 @@ import {
   Database,
   AlertTriangle,
   Fingerprint,
-  ScanFace
+  ScanFace,
+  QrCode,
+  Scale,
+  FileText
 } from 'lucide-react';
 import { Layout } from '@/components/Layout';
 import { Header } from '@/components/Header';
@@ -38,9 +41,16 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { useTheme } from '@/contexts/ThemeContext';
 import { useAuth } from '@/contexts/AuthContext';
-import { wipeAllData, getStorageStats } from '@/lib/storage';
+import { wipeAllData, getStorageStats, getSetting, saveSetting } from '@/lib/storage';
 import { toast } from '@/hooks/use-toast';
 import { cn } from '@/lib/utils';
 
@@ -52,14 +62,39 @@ export function SettingsPage() {
   const [showBiometricDialog, setShowBiometricDialog] = useState(false);
   const [biometricPassword, setBiometricPassword] = useState('');
   const [isEnablingBiometrics, setIsEnablingBiometrics] = useState(false);
+  const [qrDuration, setQrDuration] = useState('60');
+  const [showLegalDialog, setShowLegalDialog] = useState(false);
 
   useEffect(() => {
     loadStats();
+    loadSettings();
   }, []);
 
   const loadStats = async () => {
     const data = await getStorageStats();
     setStats(data);
+  };
+
+  const loadSettings = async () => {
+    const savedQrDuration = await getSetting('qrDuration');
+    if (savedQrDuration) {
+      setQrDuration(savedQrDuration);
+    }
+  };
+
+  const handleQrDurationChange = async (value: string) => {
+    setQrDuration(value);
+    await saveSetting('qrDuration', value);
+    toast({
+      title: 'Paramètre enregistré',
+      description: `Durée de validité des QR codes : ${getDurationLabel(value)}`
+    });
+  };
+
+  const getDurationLabel = (seconds: string) => {
+    const s = parseInt(seconds);
+    if (s < 60) return `${s} secondes`;
+    return `${s / 60} minute${s > 60 ? 's' : ''}`;
   };
 
   const formatSize = (bytes: number) => {
@@ -317,11 +352,43 @@ export function SettingsPage() {
           </div>
         </motion.section>
 
-        {/* Notifications Section */}
+        {/* QR Code Section */}
         <motion.section
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.3 }}
+        >
+          <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-3 px-4">
+            Partage
+          </h2>
+          <div className="bg-card rounded-2xl border border-border overflow-hidden">
+            <SettingItem
+              icon={QrCode}
+              label="Durée des QR codes"
+              description="Validité avant expiration"
+              action={
+                <Select value={qrDuration} onValueChange={handleQrDurationChange}>
+                  <SelectTrigger className="w-28 h-8 text-sm">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="30">30 sec</SelectItem>
+                    <SelectItem value="60">1 min</SelectItem>
+                    <SelectItem value="120">2 min</SelectItem>
+                    <SelectItem value="300">5 min</SelectItem>
+                    <SelectItem value="600">10 min</SelectItem>
+                  </SelectContent>
+                </Select>
+              }
+            />
+          </div>
+        </motion.section>
+
+        {/* Notifications Section */}
+        <motion.section
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.35 }}
         >
           <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wider mb-3 px-4">
             Notifications
@@ -400,8 +467,89 @@ export function SettingsPage() {
               description="Version 1.0.0"
               onClick={() => toast({ title: 'DocSafe v1.0.0', description: 'Vos documents sécurisés, 100% locaux.' })}
             />
+            <div className="h-px bg-border mx-4" />
+            <SettingItem
+              icon={Scale}
+              label="Informations légales"
+              description="Confidentialité & RGPD"
+              onClick={() => setShowLegalDialog(true)}
+            />
           </div>
         </motion.section>
+
+        {/* Legal Dialog */}
+        <Dialog open={showLegalDialog} onOpenChange={setShowLegalDialog}>
+          <DialogContent className="max-w-md max-h-[80vh] overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2">
+                <Scale className="w-5 h-5 text-primary" />
+                Informations légales
+              </DialogTitle>
+            </DialogHeader>
+            <div className="space-y-4 py-4">
+              <div className="p-4 bg-primary/10 rounded-xl">
+                <h3 className="font-semibold text-foreground flex items-center gap-2 mb-2">
+                  <Shield className="w-4 h-4 text-primary" />
+                  Stockage 100% local
+                </h3>
+                <p className="text-sm text-muted-foreground">
+                  Toutes vos données sont stockées exclusivement sur votre appareil. 
+                  Aucune information n'est transmise à des serveurs externes.
+                </p>
+              </div>
+
+              <div className="p-4 bg-secondary rounded-xl">
+                <h3 className="font-semibold text-foreground flex items-center gap-2 mb-2">
+                  <Lock className="w-4 h-4 text-primary" />
+                  Chiffrement AES-256
+                </h3>
+                <p className="text-sm text-muted-foreground">
+                  Tous vos documents sont chiffrés avec l'algorithme AES-256, 
+                  un standard de sécurité utilisé par les gouvernements et les banques.
+                </p>
+              </div>
+
+              <div className="p-4 bg-secondary rounded-xl">
+                <h3 className="font-semibold text-foreground flex items-center gap-2 mb-2">
+                  <FileText className="w-4 h-4 text-primary" />
+                  Aucune collecte de données
+                </h3>
+                <p className="text-sm text-muted-foreground">
+                  DocSafe ne collecte aucune donnée personnelle. Pas d'inscription requise, 
+                  pas de tracking, pas d'analytics. Votre vie privée est totalement préservée.
+                </p>
+              </div>
+
+              <div className="p-4 bg-secondary rounded-xl">
+                <h3 className="font-semibold text-foreground mb-2">
+                  Conformité RGPD
+                </h3>
+                <p className="text-sm text-muted-foreground">
+                  En l'absence de toute collecte de données personnelles et de tout 
+                  transfert vers des serveurs, DocSafe est conforme au Règlement 
+                  Général sur la Protection des Données (RGPD).
+                </p>
+              </div>
+
+              <div className="p-4 border border-border rounded-xl">
+                <h3 className="font-semibold text-foreground mb-2">
+                  Vos droits
+                </h3>
+                <ul className="text-sm text-muted-foreground space-y-1">
+                  <li>• Vous êtes le seul propriétaire de vos données</li>
+                  <li>• Vous pouvez supprimer toutes vos données à tout moment</li>
+                  <li>• Aucun compte utilisateur n'est nécessaire</li>
+                  <li>• L'application fonctionne entièrement hors-ligne</li>
+                </ul>
+              </div>
+            </div>
+            <DialogFooter>
+              <Button onClick={() => setShowLegalDialog(false)} className="w-full">
+                J'ai compris
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
 
         {/* Footer */}
         <p className="text-xs text-muted-foreground text-center pt-4">
