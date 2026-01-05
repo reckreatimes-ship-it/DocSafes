@@ -98,6 +98,54 @@
     --shadow-lg: 0 12px 32px -4px hsl(0 0% 0% / 0.5);
     --shadow-glow: 0 0 32px hsl(168 76% 42% / 0.3);
   }
+
+  /* AMOLED Theme - Pure black for OLED screens */
+  .amoled {
+    --background: 0 0% 0%;
+    --foreground: 210 40% 98%;
+
+    --card: 0 0% 5%;
+    --card-foreground: 210 40% 98%;
+
+    --popover: 0 0% 5%;
+    --popover-foreground: 210 40% 98%;
+
+    --primary: 168 76% 42%;
+    --primary-foreground: 0 0% 0%;
+
+    --secondary: 0 0% 10%;
+    --secondary-foreground: 210 40% 95%;
+
+    --muted: 0 0% 12%;
+    --muted-foreground: 215 20% 60%;
+
+    --accent: 168 50% 10%;
+    --accent-foreground: 168 76% 50%;
+
+    --destructive: 0 70% 50%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 0 0% 15%;
+    --input: 0 0% 15%;
+    --ring: 168 76% 42%;
+
+    /* Custom tokens - amoled */
+    --success: 142 70% 45%;
+    --success-foreground: 0 0% 0%;
+    --warning: 38 92% 55%;
+    --warning-foreground: 0 0% 0%;
+    
+    /* Gradients - amoled */
+    --gradient-primary: linear-gradient(135deg, hsl(168 76% 42%), hsl(180 70% 50%));
+    --gradient-card: linear-gradient(180deg, hsl(0 0% 6%), hsl(0 0% 3%));
+    --gradient-surface: linear-gradient(135deg, hsl(0 0% 8%), hsl(0 0% 5%));
+    
+    /* Shadows - amoled */
+    --shadow-sm: 0 1px 2px 0 hsl(0 0% 0% / 0.5);
+    --shadow-md: 0 4px 12px -2px hsl(0 0% 0% / 0.6);
+    --shadow-lg: 0 12px 32px -4px hsl(0 0% 0% / 0.7);
+    --shadow-glow: 0 0 32px hsl(168 76% 42% / 0.4);
+  }
 }
 
 @layer base {
