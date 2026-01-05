@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
-import { Share2, Trash2, Download, QrCode, FileText, Edit2, Check, X, FolderOpen } from 'lucide-react';
+import { Share2, Trash2, Download, QrCode, FileText, Edit2, Check, X, FolderOpen, Star, Tag, Plus } from 'lucide-react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { Document, Page, pdfjs } from 'react-pdf';
 import 'react-pdf/dist/esm/Page/AnnotationLayer.css';
@@ -9,6 +9,7 @@ import { Layout } from '@/components/Layout';
 import { Header } from '@/components/Header';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Badge } from '@/components/ui/badge';
 import { EmptyState } from '@/components/EmptyState';
 import { getDocument, deleteDocument, updateDocument, Document as DocType } from '@/lib/storage';
 import { getCategoryById, categories } from '@/lib/categories';
@@ -48,6 +49,8 @@ export function DocumentViewPage() {
   const [isEditing, setIsEditing] = useState(false);
   const [newName, setNewName] = useState('');
   const [showCategoryDialog, setShowCategoryDialog] = useState(false);
+  const [showTagDialog, setShowTagDialog] = useState(false);
+  const [newTag, setNewTag] = useState('');
   
   // PDF state
   const [numPages, setNumPages] = useState<number | null>(null);
@@ -158,6 +161,57 @@ export function DocumentViewPage() {
     }
   };
 
+  const handleToggleFavorite = async () => {
+    if (!documentId || !document) return;
+
+    try {
+      await updateDocument(documentId, { isFavorite: !document.isFavorite });
+      setDocument(prev => prev ? { ...prev, isFavorite: !prev.isFavorite } : null);
+      toast({
+        title: document.isFavorite ? 'Retiré des favoris' : 'Ajouté aux favoris',
+        description: document.name
+      });
+    } catch (error) {
+      toast({
+        title: 'Erreur',
+        variant: 'destructive'
+      });
+    }
+  };
+
+  const handleAddTag = async () => {
+    if (!documentId || !document || !newTag.trim()) return;
+
+    const currentTags = document.tags || [];
+    if (currentTags.includes(newTag.trim())) {
+      toast({ title: 'Ce tag existe déjà', variant: 'destructive' });
+      return;
+    }
+
+    try {
+      const updatedTags = [...currentTags, newTag.trim()];
+      await updateDocument(documentId, { tags: updatedTags });
+      setDocument(prev => prev ? { ...prev, tags: updatedTags } : null);
+      setNewTag('');
+      toast({ title: 'Tag ajouté' });
+    } catch (error) {
+      toast({ title: 'Erreur', variant: 'destructive' });
+    }
+  };
+
+  const handleRemoveTag = async (tagToRemove: string) => {
+    if (!documentId || !document) return;
+
+    try {
+      const updatedTags = (document.tags || []).filter(t => t !== tagToRemove);
+      await updateDocument(documentId, { tags: updatedTags });
+      setDocument(prev => prev ? { ...prev, tags: updatedTags } : null);
+      toast({ title: 'Tag supprimé' });
+    } catch (error) {
+      toast({ title: 'Erreur', variant: 'destructive' });
+    }
+  };
+
   const handleDownload = () => {
     if (!decryptedUrl || !document) return;
 
@@ -224,6 +278,15 @@ export function DocumentViewPage() {
               className="p-2 rounded-lg hover:bg-secondary transition-colors"
             >
               <Edit2 className="w-5 h-5 text-muted-foreground" />
+            </button>
+            <button 
+              onClick={handleToggleFavorite}
+              className={cn(
+                "p-2 rounded-lg transition-colors",
+                document?.isFavorite ? "text-warning" : "text-muted-foreground hover:bg-secondary"
+              )}
+            >
+              <Star className={cn("w-5 h-5", document?.isFavorite && "fill-current")} />
             </button>
             <AlertDialog>
               <AlertDialogTrigger asChild>
@@ -349,7 +412,7 @@ export function DocumentViewPage() {
 
         {/* Document info */}
         <div className="space-y-3">
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-3 flex-wrap">
             {category && (
               <button
                 onClick={() => setShowCategoryDialog(true)}
@@ -369,6 +432,37 @@ export function DocumentViewPage() {
             </span>
           </div>
 
+          {/* Tags */}
+          <div className="flex items-center gap-2 flex-wrap">
+            <Tag className="w-4 h-4 text-muted-foreground" />
+            {document.tags && document.tags.length > 0 ? (
+              <>
+                {document.tags.map(tag => (
+                  <Badge 
+                    key={tag} 
+                    variant="secondary"
+                    className="cursor-pointer group"
+                    onClick={() => handleRemoveTag(tag)}
+                  >
+                    {tag}
+                    <X className="w-3 h-3 ml-1 opacity-0 group-hover:opacity-100 transition-opacity" />
+                  </Badge>
+                ))}
+              </>
+            ) : (
+              <span className="text-sm text-muted-foreground">Aucun tag</span>
+            )}
+            <Button 
+              variant="outline" 
+              size="sm" 
+              className="h-7 px-2"
+              onClick={() => setShowTagDialog(true)}
+            >
+              <Plus className="w-3 h-3 mr-1" />
+              Ajouter
+            </Button>
+          </div>
+
           <p className="text-sm text-muted-foreground">
             Ajouté le {new Intl.DateTimeFormat('fr-FR', {
               day: 'numeric',
@@ -377,6 +471,39 @@ export function DocumentViewPage() {
             }).format(new Date(document.createdAt))}
           </p>
         </div>
+
+        {/* Tag dialog */}
+        <Dialog open={showTagDialog} onOpenChange={setShowTagDialog}>
+          <DialogContent className="max-w-sm">
+            <DialogHeader>
+              <DialogTitle>Ajouter un tag</DialogTitle>
+            </DialogHeader>
+            <div className="flex gap-2 py-4">
+              <Input
+                value={newTag}
+                onChange={(e) => setNewTag(e.target.value)}
+                placeholder="Ex: urgent, 2024, admin..."
+                className="flex-1"
+                onKeyDown={(e) => e.key === 'Enter' && handleAddTag()}
+              />
+              <Button onClick={handleAddTag} disabled={!newTag.trim()}>
+                Ajouter
+              </Button>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {['urgent', '2024', 'administratif', 'important', 'archivé'].map(suggestion => (
+                <Badge
+                  key={suggestion}
+                  variant="outline"
+                  className="cursor-pointer hover:bg-secondary"
+                  onClick={() => setNewTag(suggestion)}
+                >
+                  {suggestion}
+                </Badge>
+              ))}
+            </div>
+          </DialogContent>
+        </Dialog>
 
         {/* Change category dialog */}
         <Dialog open={showCategoryDialog} onOpenChange={setShowCategoryDialog}>

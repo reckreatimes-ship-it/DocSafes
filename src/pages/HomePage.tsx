@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { motion } from 'framer-motion';
 import { Plus, Shield, Lock } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
@@ -8,7 +8,8 @@ import { CategoryCard } from '@/components/CategoryCard';
 import { DocumentCard } from '@/components/DocumentCard';
 import { EmptyState } from '@/components/EmptyState';
 import { Button } from '@/components/ui/button';
-import { categories } from '@/lib/categories';
+import { Category } from '@/lib/categories';
+import { getVisibleCategories } from '@/lib/categorySettings';
 import { getAllDocuments, Document } from '@/lib/storage';
 import { useAuth } from '@/contexts/AuthContext';
 
@@ -16,22 +17,27 @@ export function HomePage() {
   const navigate = useNavigate();
   const { logout } = useAuth();
   const [documents, setDocuments] = useState<Document[]>([]);
+  const [categories, setCategories] = useState<Category[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
-  useEffect(() => {
-    loadDocuments();
-  }, []);
-
-  const loadDocuments = async () => {
+  const loadData = useCallback(async () => {
     try {
-      const docs = await getAllDocuments();
+      const [docs, cats] = await Promise.all([
+        getAllDocuments(),
+        getVisibleCategories()
+      ]);
       setDocuments(docs);
+      setCategories(cats);
     } catch (error) {
-      console.error('Error loading documents:', error);
+      console.error('Error loading data:', error);
     } finally {
       setIsLoading(false);
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    loadData();
+  }, [loadData]);
 
   const getCategoryCount = (categoryId: string) => {
     return documents.filter(doc => doc.category === categoryId).length;

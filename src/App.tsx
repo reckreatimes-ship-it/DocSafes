@@ -7,6 +7,7 @@ import { AuthProvider, useAuth } from "@/contexts/AuthContext";
 import { ThemeProvider } from "@/contexts/ThemeContext";
 import { LockScreen } from "@/components/LockScreen";
 import { PermissionsScreen } from "@/components/PermissionsScreen";
+import { OnboardingScreen } from "@/components/OnboardingScreen";
 import { HomePage } from "@/pages/HomePage";
 import { SearchPage } from "@/pages/SearchPage";
 import { AddDocumentPage } from "@/pages/AddDocumentPage";
@@ -17,7 +18,7 @@ import { DocumentViewPage } from "@/pages/DocumentViewPage";
 import { SharePage } from "@/pages/SharePage";
 import { QRCodePage } from "@/pages/QRCodePage";
 import { ReceivePage } from "@/pages/ReceivePage";
-import { getSetting } from "@/lib/storage";
+import { getSetting, saveSetting } from "@/lib/storage";
 
 const queryClient = new QueryClient();
 
@@ -54,15 +55,23 @@ function AppContent() {
   const location = useLocation();
   const [resetKey, setResetKey] = useState(0);
   const [permissionsChecked, setPermissionsChecked] = useState<boolean | null>(null);
+  const [onboardingComplete, setOnboardingComplete] = useState<boolean | null>(null);
 
-  // Check if permissions were already requested
+  // Check if permissions and onboarding were already done
   useEffect(() => {
-    async function checkPermissions() {
-      const requested = await getSetting('permissionsRequested');
-      setPermissionsChecked(requested === 'true');
+    async function checkInitialState() {
+      const permRequested = await getSetting('permissionsRequested');
+      const onboardingDone = await getSetting('onboardingComplete');
+      setPermissionsChecked(permRequested === 'true');
+      setOnboardingComplete(onboardingDone === 'true');
     }
-    checkPermissions();
+    checkInitialState();
   }, []);
+
+  const handleOnboardingComplete = async () => {
+    await saveSetting('onboardingComplete', 'true');
+    setOnboardingComplete(true);
+  };
 
   // Allow public routes without authentication
   const isPublicRoute = location.pathname.startsWith('/receive');
@@ -71,8 +80,8 @@ function AppContent() {
     return <PublicRoutes />;
   }
 
-  // Show loading while checking permissions
-  if (permissionsChecked === null || isLoading) {
+  // Show loading while checking state
+  if (permissionsChecked === null || onboardingComplete === null || isLoading) {
     return (
       <div className="fixed inset-0 bg-background flex items-center justify-center">
         <div className="w-12 h-12 border-4 border-primary border-t-transparent rounded-full animate-spin" />
@@ -80,7 +89,12 @@ function AppContent() {
     );
   }
 
-  // Show permissions screen on first launch
+  // Show onboarding on first launch
+  if (!onboardingComplete) {
+    return <OnboardingScreen onComplete={handleOnboardingComplete} />;
+  }
+
+  // Show permissions screen
   if (!permissionsChecked) {
     return <PermissionsScreen onComplete={() => setPermissionsChecked(true)} />;
   }

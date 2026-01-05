@@ -14,6 +14,7 @@ export interface Document {
   updatedAt: Date;
   tags?: string[];
   folderId?: string;
+  isFavorite?: boolean;
 }
 
 export interface Folder {
