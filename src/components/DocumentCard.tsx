@@ -1,10 +1,12 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { motion } from 'framer-motion';
-import { FileText, Image as ImageIcon, MoreVertical, Share2, Trash2, Eye, Star, Tag } from 'lucide-react';
+import { FileText, Image as ImageIcon, MoreVertical, Share2, Trash2, Eye, Star, Edit2, Check, X } from 'lucide-react';
 import { Document, updateDocument } from '@/lib/storage';
 import { getCategoryById } from '@/lib/categories';
 import { cn } from '@/lib/utils';
 import { Badge } from '@/components/ui/badge';
+import { Input } from '@/components/ui/input';
+import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -26,6 +28,8 @@ interface DocumentCardProps {
 export function DocumentCard({ document, onView, onShare, onDelete, onUpdate, delay = 0 }: DocumentCardProps) {
   const category = getCategoryById(document.category);
   const Icon = document.type === 'pdf' ? FileText : ImageIcon;
+  const [isEditing, setIsEditing] = useState(false);
+  const [newName, setNewName] = useState(document.name);
   
   const formatDate = (date: Date) => {
     return new Intl.DateTimeFormat('fr-FR', {
@@ -50,6 +54,63 @@ export function DocumentCard({ document, onView, onShare, onDelete, onUpdate, de
       description: document.name
     });
   };
+
+  const handleRename = async () => {
+    if (!newName.trim()) return;
+    await updateDocument(document.id, { name: newName.trim() });
+    setIsEditing(false);
+    onUpdate?.();
+    toast({ title: 'Document renommé', description: newName.trim() });
+  };
+
+  const handleCancelRename = () => {
+    setIsEditing(false);
+    setNewName(document.name);
+  };
+
+  if (isEditing) {
+    return (
+      <motion.div
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        className="bg-card rounded-xl p-4 border-2 border-primary"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center gap-3">
+          <div 
+            className="w-12 h-12 rounded-lg flex items-center justify-center shrink-0"
+            style={{ backgroundColor: category?.color + '20' }}
+          >
+            {document.thumbnail ? (
+              <img 
+                src={document.thumbnail} 
+                alt={document.name}
+                className="w-full h-full object-cover rounded-lg"
+              />
+            ) : (
+              <Icon className="w-6 h-6" style={{ color: category?.color }} />
+            )}
+          </div>
+          <Input
+            value={newName}
+            onChange={(e) => setNewName(e.target.value)}
+            className="flex-1 h-10"
+            autoFocus
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') handleRename();
+              if (e.key === 'Escape') handleCancelRename();
+            }}
+          />
+          <Button size="icon" onClick={handleRename} className="h-10 w-10">
+            <Check className="w-4 h-4" />
+          </Button>
+          <Button size="icon" variant="ghost" onClick={handleCancelRename} className="h-10 w-10">
+            <X className="w-4 h-4" />
+          </Button>
+        </div>
+      </motion.div>
+    );
+  }
 
   return (
     <motion.div
@@ -141,6 +202,10 @@ export function DocumentCard({ document, onView, onShare, onDelete, onUpdate, de
               </button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-48">
+              <DropdownMenuItem onClick={(e) => { e.stopPropagation(); setIsEditing(true); }}>
+                <Edit2 className="w-4 h-4 mr-2" />
+                Renommer
+              </DropdownMenuItem>
               <DropdownMenuItem onClick={() => onView(document)}>
                 <Eye className="w-4 h-4 mr-2" />
                 Voir

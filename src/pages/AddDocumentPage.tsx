@@ -1,17 +1,16 @@
 import React, { useState, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Upload, Camera, FileText, Image as ImageIcon, Check, ArrowRight, ScanLine, Folder, Files } from 'lucide-react';
+import { Upload, Camera, FileText, Image as ImageIcon, Check, ArrowRight, ScanLine, Folder } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { Layout } from '@/components/Layout';
 import { Header } from '@/components/Header';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Scanner } from '@/components/Scanner';
-import { MultiPageScanner } from '@/components/MultiPageScanner';
+import { ProfessionalScanner } from '@/components/ProfessionalScanner';
 import { FolderManager } from '@/components/FolderManager';
 import { categories } from '@/lib/categories';
-import { saveDocument, Document, getAllFolders, Folder as FolderType } from '@/lib/storage';
+import { saveDocument, Document, Folder as FolderType } from '@/lib/storage';
 import { useAuth } from '@/contexts/AuthContext';
 import { encryptData } from '@/lib/crypto';
 import { arrayBufferToBase64, uint8ArrayToBase64 } from '@/lib/base64';
@@ -33,8 +32,6 @@ export function AddDocumentPage() {
   const [isProcessing, setIsProcessing] = useState(false);
   const [preview, setPreview] = useState<string | null>(null);
   const [showScanner, setShowScanner] = useState(false);
-  const [showMultiPageScanner, setShowMultiPageScanner] = useState(false);
-  const [folders, setFolders] = useState<FolderType[]>([]);
 
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -63,26 +60,52 @@ export function AddDocumentPage() {
     setStep('category');
   };
 
-  const handleScanCapture = async (imageSrc: string) => {
+  const handleScanComplete = async (file: File, previewImg: string, name: string, category: string) => {
     setShowScanner(false);
     
-    // Convert base64 to File
-    const response = await fetch(imageSrc);
-    const blob = await response.blob();
-    const file = new File([blob], `scan_${Date.now()}.jpg`, { type: 'image/jpeg' });
-    
-    setSelectedFile(file);
-    setDocumentName(`Scan du ${new Date().toLocaleDateString('fr-FR')}`);
-    setPreview(imageSrc);
-    setStep('category');
-  };
+    if (!encryptionKey) return;
 
-  const handleMultiPageComplete = (file: File, preview: string) => {
-    setShowMultiPageScanner(false);
-    setSelectedFile(file);
-    setDocumentName(`Document ${new Date().toLocaleDateString('fr-FR')}`);
-    setPreview(preview);
-    setStep('category');
+    setIsProcessing(true);
+
+    try {
+      const arrayBuffer = await file.arrayBuffer();
+      const { encrypted, iv } = await encryptData(arrayBuffer, encryptionKey);
+      
+      const encryptedBase64 = arrayBufferToBase64(encrypted);
+      const ivBase64 = uint8ArrayToBase64(iv);
+
+      const doc: Document = {
+        id: crypto.randomUUID(),
+        name: name,
+        category: category,
+        type: file.type === 'application/pdf' ? 'pdf' : 'image',
+        mimeType: file.type,
+        size: file.size,
+        encryptedData: encryptedBase64,
+        iv: ivBase64,
+        thumbnail: previewImg,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
+
+      await saveDocument(doc);
+
+      toast({
+        title: 'Document ajouté',
+        description: 'Votre document a été chiffré et sauvegardé localement.'
+      });
+
+      navigate('/home');
+    } catch (error) {
+      console.error('Error saving document:', error);
+      toast({
+        title: 'Erreur',
+        description: 'Impossible de sauvegarder le document.',
+        variant: 'destructive'
+      });
+    } finally {
+      setIsProcessing(false);
+    }
   };
 
   const handleSave = async () => {
@@ -91,17 +114,12 @@ export function AddDocumentPage() {
     setIsProcessing(true);
 
     try {
-      // Read file as ArrayBuffer
       const arrayBuffer = await selectedFile.arrayBuffer();
-      
-      // Encrypt the file
       const { encrypted, iv } = await encryptData(arrayBuffer, encryptionKey);
       
-      // Convert to base64 for storage (using chunked approach for large files)
       const encryptedBase64 = arrayBufferToBase64(encrypted);
       const ivBase64 = uint8ArrayToBase64(iv);
 
-      // Create document record
       const doc: Document = {
         id: crypto.randomUUID(),
         name: documentName,
@@ -174,35 +192,24 @@ export function AddDocumentPage() {
                   </div>
                 </button>
 
-                {/* Scanner - single page */}
+                {/* Professional Scanner */}
                 <button
                   onClick={() => setShowScanner(true)}
-                  className="flex flex-col items-center gap-4 p-6 bg-card rounded-2xl border border-border hover:border-primary/50 transition-all"
+                  className="flex flex-col items-center gap-4 p-6 bg-gradient-to-br from-primary/20 to-primary/5 rounded-2xl border-2 border-primary/30 hover:border-primary transition-all relative overflow-hidden"
                 >
-                  <div className="w-16 h-16 rounded-2xl bg-primary/10 flex items-center justify-center">
+                  <div className="absolute top-2 right-2 px-2 py-0.5 bg-primary text-primary-foreground text-xs font-medium rounded-full">
+                    PRO
+                  </div>
+                  <div className="w-16 h-16 rounded-2xl bg-primary/20 flex items-center justify-center">
                     <ScanLine className="w-8 h-8 text-primary" />
                   </div>
                   <div className="text-center">
                     <p className="font-medium text-foreground">Scanner</p>
-                    <p className="text-sm text-muted-foreground">Une page</p>
+                    <p className="text-sm text-muted-foreground">Multi-pages, édition</p>
                   </div>
                 </button>
 
-                {/* Multi-page scanner */}
-                <button
-                  onClick={() => setShowMultiPageScanner(true)}
-                  className="flex flex-col items-center gap-4 p-6 bg-card rounded-2xl border border-border hover:border-primary/50 transition-all"
-                >
-                  <div className="w-16 h-16 rounded-2xl bg-primary/10 flex items-center justify-center">
-                    <Files className="w-8 h-8 text-primary" />
-                  </div>
-                  <div className="text-center">
-                    <p className="font-medium text-foreground">Multi-pages</p>
-                    <p className="text-sm text-muted-foreground">Créer un PDF</p>
-                  </div>
-                </button>
-
-                {/* Quick photo - now col-span-2 to fill the row */}
+                {/* Quick photo */}
                 <button
                   onClick={() => {
                     if (fileInputRef.current) {
@@ -211,14 +218,14 @@ export function AddDocumentPage() {
                       fileInputRef.current.click();
                     }
                   }}
-                  className="flex flex-col items-center gap-4 p-6 bg-card rounded-2xl border border-border hover:border-primary/50 transition-all"
+                  className="flex flex-col items-center gap-4 p-6 bg-card rounded-2xl border border-border hover:border-primary/50 transition-all col-span-2"
                 >
                   <div className="w-16 h-16 rounded-2xl bg-primary/10 flex items-center justify-center">
                     <Camera className="w-8 h-8 text-primary" />
                   </div>
                   <div className="text-center">
-                    <p className="font-medium text-foreground">Photo</p>
-                    <p className="text-sm text-muted-foreground">Rapide</p>
+                    <p className="font-medium text-foreground">Photo rapide</p>
+                    <p className="text-sm text-muted-foreground">Capture simple sans édition</p>
                   </div>
                 </button>
               </div>
@@ -398,22 +405,12 @@ export function AddDocumentPage() {
         </div>
       </Layout>
 
-      {/* Scanner overlay */}
+      {/* Professional Scanner overlay */}
       <AnimatePresence>
         {showScanner && (
-          <Scanner 
-            onCapture={handleScanCapture}
+          <ProfessionalScanner 
+            onComplete={handleScanComplete}
             onClose={() => setShowScanner(false)}
-          />
-        )}
-      </AnimatePresence>
-
-      {/* Multi-page scanner overlay */}
-      <AnimatePresence>
-        {showMultiPageScanner && (
-          <MultiPageScanner 
-            onComplete={handleMultiPageComplete}
-            onClose={() => setShowMultiPageScanner(false)}
           />
         )}
       </AnimatePresence>
