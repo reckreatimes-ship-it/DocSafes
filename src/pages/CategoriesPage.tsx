@@ -4,22 +4,23 @@ import { Layout } from '@/components/Layout';
 import { Header } from '@/components/Header';
 import { CategoryCard } from '@/components/CategoryCard';
 import { CategoryManager } from '@/components/CategoryManager';
-import { Category } from '@/lib/categories';
-import { getVisibleCategories } from '@/lib/categorySettings';
+import { Category, categories as defaultCategories } from '@/lib/categories';
+import { getAllCategoriesWithSettings } from '@/lib/categorySettings';
 import { getAllDocuments, Document } from '@/lib/storage';
 
 export function CategoriesPage() {
   const navigate = useNavigate();
   const [documents, setDocuments] = useState<Document[]>([]);
-  const [categories, setCategories] = useState<Category[]>([]);
+  const [categories, setCategories] = useState<Array<Category & { hidden: boolean; originalName: string }>>([]);
 
   const loadData = useCallback(async () => {
     const [docs, cats] = await Promise.all([
       getAllDocuments(),
-      getVisibleCategories()
+      getAllCategoriesWithSettings()
     ]);
     setDocuments(docs);
-    setCategories(cats);
+    // Filter out hidden categories for display
+    setCategories(cats.filter(c => !c.hidden));
   }, []);
 
   useEffect(() => {
@@ -46,7 +47,9 @@ export function CategoriesPage() {
               category={category}
               count={getCategoryCount(category.id)}
               onClick={() => navigate(`/category/${category.id}`)}
+              onUpdate={loadData}
               delay={index}
+              originalName={category.originalName}
             />
           ))}
         </div>
