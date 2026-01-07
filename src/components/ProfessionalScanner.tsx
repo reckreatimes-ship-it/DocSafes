@@ -12,6 +12,11 @@ import { Slider } from '@/components/ui/slider';
 import { jsPDF } from 'jspdf';
 import { categories } from '@/lib/categories';
 import { cn } from '@/lib/utils';
+import { 
+  initializeCameraForScanner, 
+  openAppSettings,
+  isNativePlatform 
+} from '@/lib/cameraPermissions';
 
 interface ProcessedPage {
   original: string;
@@ -27,21 +32,21 @@ interface ProfessionalScannerProps {
 }
 
 type ScanStep = 'capture' | 'edit' | 'finalize';
+type CameraState = 'initializing' | 'ready' | 'error' | 'denied' | 'permanently_denied';
 
 export function ProfessionalScanner({ onComplete, onClose }: ProfessionalScannerProps) {
   const webcamRef = useRef<Webcam>(null);
-  const canvasRef = useRef<HTMLCanvasElement>(null);
   
   const [step, setStep] = useState<ScanStep>('capture');
   const [pages, setPages] = useState<ProcessedPage[]>([]);
   const [currentPageIndex, setCurrentPageIndex] = useState(0);
   const [currentCapture, setCurrentCapture] = useState<string | null>(null);
   
-  // Camera state
-  const [facingMode, setFacingMode] = useState<'user' | 'environment'>('environment');
-  const [hasPermission, setHasPermission] = useState<boolean | null>(null);
+  // Camera state - simplified and robust
+  const [cameraState, setCameraState] = useState<CameraState>('initializing');
   const [cameraError, setCameraError] = useState<string | null>(null);
-  const [isRequestingPermission, setIsRequestingPermission] = useState(false);
+  const [facingMode, setFacingMode] = useState<'user' | 'environment'>('environment');
+  const [webcamReady, setWebcamReady] = useState(false);
   
   // Edit state
   const [brightness, setBrightness] = useState(100);
@@ -57,50 +62,36 @@ export function ProfessionalScanner({ onComplete, onClose }: ProfessionalScanner
   const [selectedCategory, setSelectedCategory] = useState('other');
   const [isGenerating, setIsGenerating] = useState(false);
 
+  // Initialize camera with proper permission handling
   useEffect(() => {
-    requestCameraPermission();
-  }, []);
-
-  const requestCameraPermission = async () => {
-    setIsRequestingPermission(true);
-    setCameraError(null);
+    let mounted = true;
     
-    try {
-      try {
-        const { Camera: CapCamera } = await import('@capacitor/camera');
-        const permissions = await CapCamera.requestPermissions({ permissions: ['camera'] });
-        
-        if (permissions.camera === 'granted') {
-          setHasPermission(true);
-          setIsRequestingPermission(false);
-          return;
-        } else if (permissions.camera === 'denied') {
-          setCameraError('Accès à la caméra refusé.');
-          setHasPermission(false);
-          setIsRequestingPermission(false);
-          return;
-        }
-      } catch {
-        console.log('Capacitor not available, using web API');
-      }
+    const initCamera = async () => {
+      setCameraState('initializing');
+      setCameraError(null);
       
-      const stream = await navigator.mediaDevices.getUserMedia({ 
-        video: { facingMode: facingMode }
-      });
-      stream.getTracks().forEach(track => track.stop());
-      setHasPermission(true);
-    } catch (error: any) {
-      setHasPermission(false);
-      if (error.name === 'NotAllowedError') {
-        setCameraError('Accès à la caméra refusé.');
-      } else if (error.name === 'NotFoundError') {
-        setCameraError('Aucune caméra détectée.');
+      console.log('[Scanner] Initializing camera...');
+      
+      const result = await initializeCameraForScanner();
+      
+      if (!mounted) return;
+      
+      if (result.success) {
+        console.log('[Scanner] Camera initialized successfully');
+        setCameraState('ready');
       } else {
-        setCameraError('Erreur lors de l\'accès à la caméra.');
+        console.error('[Scanner] Camera initialization failed:', result.error);
+        setCameraError(result.error || 'Erreur d\'initialisation de la caméra');
+        setCameraState(result.permanentlyDenied ? 'permanently_denied' : 'denied');
       }
-    }
-    setIsRequestingPermission(false);
-  };
+    };
+    
+    initCamera();
+    
+    return () => {
+      mounted = false;
+    };
+  }, []);
 
   const videoConstraints = {
     width: { ideal: 1920 },
@@ -108,12 +99,54 @@ export function ProfessionalScanner({ onComplete, onClose }: ProfessionalScanner
     facingMode: { ideal: facingMode },
   };
 
-  const capture = useCallback(() => {
-    const imageSrc = webcamRef.current?.getScreenshot();
-    if (imageSrc) {
-      setCurrentCapture(imageSrc);
+  const handleUserMedia = useCallback(() => {
+    console.log('[Scanner] Webcam stream started');
+    setWebcamReady(true);
+  }, []);
+
+  const handleUserMediaError = useCallback((error: string | DOMException) => {
+    console.error('[Scanner] Webcam error:', error);
+    const errorMessage = typeof error === 'string' ? error : error.message;
+    
+    if (errorMessage.includes('Permission') || errorMessage.includes('NotAllowed')) {
+      setCameraError('Accès à la caméra refusé. Veuillez autoriser l\'accès dans les paramètres.');
+      setCameraState('denied');
+    } else if (errorMessage.includes('NotFound') || errorMessage.includes('DevicesNotFound')) {
+      setCameraError('Aucune caméra détectée sur cet appareil.');
+      setCameraState('error');
+    } else {
+      setCameraError(`Erreur de caméra: ${errorMessage}`);
+      setCameraState('error');
     }
   }, []);
+
+  const retryCamera = useCallback(async () => {
+    setCameraState('initializing');
+    setCameraError(null);
+    setWebcamReady(false);
+    
+    const result = await initializeCameraForScanner();
+    
+    if (result.success) {
+      setCameraState('ready');
+    } else {
+      setCameraError(result.error || 'Erreur');
+      setCameraState(result.permanentlyDenied ? 'permanently_denied' : 'denied');
+    }
+  }, []);
+
+  const capture = useCallback(() => {
+    if (!webcamRef.current || !webcamReady) {
+      console.warn('[Scanner] Cannot capture - webcam not ready');
+      return;
+    }
+    
+    const imageSrc = webcamRef.current.getScreenshot();
+    if (imageSrc) {
+      console.log('[Scanner] Captured image');
+      setCurrentCapture(imageSrc);
+    }
+  }, [webcamReady]);
 
   const confirmCapture = () => {
     if (!currentCapture) return;
@@ -141,6 +174,7 @@ export function ProfessionalScanner({ onComplete, onClose }: ProfessionalScanner
 
   const toggleCamera = () => {
     setFacingMode(prev => prev === 'user' ? 'environment' : 'user');
+    setWebcamReady(false);
   };
 
   // Image processing
@@ -170,8 +204,8 @@ export function ProfessionalScanner({ onComplete, onClose }: ProfessionalScanner
         ctx.drawImage(img, sx, sy, sw, sh, 0, 0, sw, sh);
         
         // Apply filters
-        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-        const data = imageData.data;
+        const imageDataObj = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        const data = imageDataObj.data;
         
         const brightnessFactor = brightnessVal / 100;
         const contrastFactor = (contrastVal - 100) * 2.55;
@@ -209,7 +243,7 @@ export function ProfessionalScanner({ onComplete, onClose }: ProfessionalScanner
           data[i + 2] = Math.max(0, Math.min(255, b));
         }
         
-        ctx.putImageData(imageData, 0, 0);
+        ctx.putImageData(imageDataObj, 0, 0);
         resolve(canvas.toDataURL('image/jpeg', 0.95));
       };
       img.src = imageData;
@@ -352,6 +386,36 @@ export function ProfessionalScanner({ onComplete, onClose }: ProfessionalScanner
 
   const currentPage = pages[currentPageIndex];
 
+  // Render camera error/permission state
+  const renderCameraError = () => (
+    <div className="flex flex-col items-center justify-center h-full gap-4 p-6 text-center bg-black">
+      <AlertCircle className="w-16 h-16 text-destructive" />
+      <p className="text-lg font-medium text-foreground">{cameraError}</p>
+      
+      {cameraState === 'permanently_denied' ? (
+        <div className="flex flex-col gap-3">
+          <p className="text-sm text-muted-foreground">
+            La permission a été refusée définitivement. 
+            Veuillez l'activer manuellement dans les paramètres.
+          </p>
+          <Button onClick={openAppSettings} variant="outline">
+            <Settings className="w-4 h-4 mr-2" />
+            Ouvrir les paramètres
+          </Button>
+          <Button onClick={retryCamera} variant="ghost">
+            <RotateCcw className="w-4 h-4 mr-2" />
+            Réessayer
+          </Button>
+        </div>
+      ) : (
+        <Button onClick={retryCamera} disabled={cameraState === 'initializing'}>
+          <RotateCcw className="w-4 h-4 mr-2" />
+          {cameraState === 'initializing' ? 'Initialisation...' : 'Réessayer'}
+        </Button>
+      )}
+    </div>
+  );
+
   return (
     <motion.div
       initial={{ opacity: 0 }}
@@ -385,18 +449,25 @@ export function ProfessionalScanner({ onComplete, onClose }: ProfessionalScanner
               className="h-full flex flex-col"
             >
               <div className="flex-1 relative bg-black">
-                {cameraError ? (
-                  <div className="flex flex-col items-center justify-center h-full gap-4 p-6 text-center">
-                    <AlertCircle className="w-12 h-12 text-destructive" />
-                    <p className="text-foreground">{cameraError}</p>
-                    <Button onClick={requestCameraPermission} disabled={isRequestingPermission}>
-                      <RotateCcw className="w-4 h-4 mr-2" />
-                      Réessayer
-                    </Button>
+                {/* Camera loading/error states */}
+                {cameraState === 'initializing' && (
+                  <div className="flex flex-col items-center justify-center h-full gap-4">
+                    <div className="w-12 h-12 border-4 border-primary border-t-transparent rounded-full animate-spin" />
+                    <p className="text-muted-foreground">Initialisation de la caméra...</p>
                   </div>
-                ) : currentCapture ? (
+                )}
+                
+                {(cameraState === 'error' || cameraState === 'denied' || cameraState === 'permanently_denied') && 
+                  renderCameraError()
+                }
+                
+                {/* Current capture preview */}
+                {cameraState === 'ready' && currentCapture && (
                   <img src={currentCapture} alt="Capture" className="w-full h-full object-contain" />
-                ) : (
+                )}
+                
+                {/* Live webcam feed */}
+                {cameraState === 'ready' && !currentCapture && (
                   <>
                     <Webcam
                       ref={webcamRef}
@@ -405,8 +476,10 @@ export function ProfessionalScanner({ onComplete, onClose }: ProfessionalScanner
                       videoConstraints={videoConstraints}
                       className="w-full h-full object-cover"
                       screenshotQuality={0.95}
-                      onUserMediaError={() => setCameraError('Accès refusé')}
+                      onUserMedia={handleUserMedia}
+                      onUserMediaError={handleUserMediaError}
                     />
+                    
                     {/* Document guide overlay */}
                     <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
                       <div className="w-[85%] aspect-[3/4] border-2 border-white/50 rounded-lg relative">
@@ -416,12 +489,19 @@ export function ProfessionalScanner({ onComplete, onClose }: ProfessionalScanner
                         <div className="absolute bottom-0 right-0 w-8 h-8 border-b-4 border-r-4 border-primary rounded-br-lg" />
                       </div>
                     </div>
+                    
+                    {/* Loading indicator for webcam */}
+                    {!webcamReady && (
+                      <div className="absolute inset-0 flex items-center justify-center bg-black/50">
+                        <div className="w-10 h-10 border-4 border-white border-t-transparent rounded-full animate-spin" />
+                      </div>
+                    )}
                   </>
                 )}
               </div>
 
               {/* Pages strip */}
-              {pages.length > 0 && !currentCapture && (
+              {pages.length > 0 && !currentCapture && cameraState === 'ready' && (
                 <div className="p-3 bg-secondary/50 border-t border-border">
                   <div className="flex gap-2 overflow-x-auto">
                     {pages.map((page, index) => (
@@ -467,13 +547,17 @@ export function ProfessionalScanner({ onComplete, onClose }: ProfessionalScanner
                     
                     <button
                       onClick={capture}
-                      disabled={!hasPermission}
-                      className="w-16 h-16 rounded-full bg-primary flex items-center justify-center hover:scale-95 transition-transform disabled:opacity-50"
+                      disabled={cameraState !== 'ready' || !webcamReady}
+                      className="w-16 h-16 rounded-full bg-primary flex items-center justify-center hover:scale-95 transition-transform disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                       <Camera className="w-7 h-7 text-primary-foreground" />
                     </button>
                     
-                    <button onClick={toggleCamera} className="p-3 rounded-full bg-secondary">
+                    <button 
+                      onClick={toggleCamera} 
+                      disabled={cameraState !== 'ready'}
+                      className="p-3 rounded-full bg-secondary disabled:opacity-50"
+                    >
                       <RotateCcw className="w-5 h-5" />
                     </button>
                   </div>
@@ -492,16 +576,15 @@ export function ProfessionalScanner({ onComplete, onClose }: ProfessionalScanner
               className="h-full flex flex-col"
             >
               {/* Image preview */}
-              <div className="flex-1 relative bg-secondary overflow-hidden">
-                <img 
-                  src={currentPage.processed} 
-                  alt="Edit" 
-                  className="w-full h-full object-contain"
-                />
-                
-                {/* Crop overlay */}
-                {isCropping && (
-                  <div className="absolute inset-0 bg-black/50">
+              <div className="flex-1 relative bg-black overflow-hidden">
+                {isCropping ? (
+                  <div className="relative w-full h-full">
+                    <img 
+                      src={currentPage.original} 
+                      alt="Original" 
+                      className="w-full h-full object-contain opacity-50"
+                    />
+                    {/* Crop overlay */}
                     <div 
                       className="absolute border-2 border-primary bg-transparent"
                       style={{
@@ -511,126 +594,199 @@ export function ProfessionalScanner({ onComplete, onClose }: ProfessionalScanner
                         height: `${cropArea.height}%`
                       }}
                     >
-                      {/* Crop handles would go here for a full implementation */}
+                      <div className="absolute -top-2 -left-2 w-4 h-4 bg-primary rounded-full" />
+                      <div className="absolute -top-2 -right-2 w-4 h-4 bg-primary rounded-full" />
+                      <div className="absolute -bottom-2 -left-2 w-4 h-4 bg-primary rounded-full" />
+                      <div className="absolute -bottom-2 -right-2 w-4 h-4 bg-primary rounded-full" />
                     </div>
                   </div>
+                ) : (
+                  <img 
+                    src={currentPage.processed} 
+                    alt="Preview" 
+                    className="w-full h-full object-contain"
+                  />
                 )}
               </div>
 
               {/* Page thumbnails */}
-              <div className="p-3 bg-secondary/30 border-t border-border">
-                <div className="flex gap-2 overflow-x-auto">
-                  {pages.map((page, index) => (
-                    <button
-                      key={index}
-                      onClick={() => {
-                        setCurrentPageIndex(index);
-                        setBrightness(page.brightness);
-                        setContrast(page.contrast);
-                        setColorMode(page.mode);
-                      }}
-                      className={cn(
-                        "relative shrink-0 rounded-lg overflow-hidden border-2 transition-colors",
-                        index === currentPageIndex ? "border-primary" : "border-transparent"
-                      )}
-                    >
-                      <img 
-                        src={page.processed} 
-                        alt={`Page ${index + 1}`}
-                        className="w-12 h-16 object-cover"
-                      />
-                      <span className="absolute bottom-0.5 right-0.5 text-xs bg-black/60 text-white px-1 rounded">
-                        {index + 1}
-                      </span>
-                    </button>
-                  ))}
-                  <button
-                    onClick={addMorePages}
-                    className="w-12 h-16 shrink-0 rounded-lg border-2 border-dashed border-muted-foreground/30 flex items-center justify-center hover:border-primary transition-colors"
-                  >
-                    <Plus className="w-5 h-5 text-muted-foreground" />
-                  </button>
+              {pages.length > 1 && (
+                <div className="p-3 bg-secondary/50 border-t border-border">
+                  <div className="flex gap-2 overflow-x-auto">
+                    {pages.map((page, index) => (
+                      <button
+                        key={index}
+                        onClick={() => {
+                          setCurrentPageIndex(index);
+                          setBrightness(page.brightness);
+                          setContrast(page.contrast);
+                          setColorMode(page.mode);
+                        }}
+                        className={cn(
+                          "relative shrink-0 rounded-lg overflow-hidden border-2 transition-all",
+                          index === currentPageIndex ? "border-primary" : "border-transparent"
+                        )}
+                      >
+                        <img 
+                          src={page.processed} 
+                          alt={`Page ${index + 1}`}
+                          className="w-14 h-18 object-cover"
+                        />
+                        <span className="absolute bottom-0 left-0 right-0 bg-black/50 text-white text-xs text-center py-0.5">
+                          {index + 1}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
                 </div>
-              </div>
+              )}
 
               {/* Edit controls */}
-              <div className="p-4 space-y-4 bg-background border-t border-border">
-                {/* Color mode buttons */}
-                <div className="flex gap-2">
-                  {[
-                    { mode: 'color' as const, label: 'Couleur', icon: Palette },
-                    { mode: 'grayscale' as const, label: 'Gris', icon: Contrast },
-                    { mode: 'bw' as const, label: 'N&B', icon: FileText },
-                  ].map(({ mode, label, icon: ModeIcon }) => (
-                    <button
-                      key={mode}
-                      onClick={() => setColorMode(mode)}
-                      className={cn(
-                        "flex-1 py-2 px-3 rounded-lg flex items-center justify-center gap-2 transition-colors",
-                        colorMode === mode 
-                          ? "bg-primary text-primary-foreground" 
-                          : "bg-secondary text-foreground hover:bg-secondary/80"
-                      )}
-                    >
-                      <ModeIcon className="w-4 h-4" />
-                      <span className="text-sm">{label}</span>
-                    </button>
-                  ))}
-                </div>
-
-                {/* Brightness slider */}
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between">
-                    <Label className="flex items-center gap-2">
-                      <Sun className="w-4 h-4" />
-                      Luminosité
-                    </Label>
-                    <span className="text-sm text-muted-foreground">{brightness}%</span>
+              <div className="p-4 bg-background border-t border-border space-y-4 max-h-[40vh] overflow-y-auto">
+                {isCropping ? (
+                  <div className="space-y-4">
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <Label className="text-xs">Position X (%)</Label>
+                        <Slider
+                          value={[cropArea.x]}
+                          onValueChange={([v]) => setCropArea(prev => ({ ...prev, x: v }))}
+                          min={0}
+                          max={90}
+                          step={1}
+                        />
+                      </div>
+                      <div>
+                        <Label className="text-xs">Position Y (%)</Label>
+                        <Slider
+                          value={[cropArea.y]}
+                          onValueChange={([v]) => setCropArea(prev => ({ ...prev, y: v }))}
+                          min={0}
+                          max={90}
+                          step={1}
+                        />
+                      </div>
+                      <div>
+                        <Label className="text-xs">Largeur (%)</Label>
+                        <Slider
+                          value={[cropArea.width]}
+                          onValueChange={([v]) => setCropArea(prev => ({ ...prev, width: v }))}
+                          min={10}
+                          max={100 - cropArea.x}
+                          step={1}
+                        />
+                      </div>
+                      <div>
+                        <Label className="text-xs">Hauteur (%)</Label>
+                        <Slider
+                          value={[cropArea.height]}
+                          onValueChange={([v]) => setCropArea(prev => ({ ...prev, height: v }))}
+                          min={10}
+                          max={100 - cropArea.y}
+                          step={1}
+                        />
+                      </div>
+                    </div>
+                    <div className="flex gap-2">
+                      <Button variant="outline" className="flex-1" onClick={() => setIsCropping(false)}>
+                        Annuler
+                      </Button>
+                      <Button className="flex-1" onClick={applyCrop}>
+                        Appliquer
+                      </Button>
+                    </div>
                   </div>
-                  <Slider
-                    value={[brightness]}
-                    onValueChange={([v]) => setBrightness(v)}
-                    min={50}
-                    max={150}
-                    step={5}
-                  />
-                </div>
+                ) : (
+                  <>
+                    {/* Color mode */}
+                    <div>
+                      <Label className="text-xs mb-2 block">Mode couleur</Label>
+                      <div className="flex gap-2">
+                        {(['color', 'grayscale', 'bw'] as const).map(mode => (
+                          <button
+                            key={mode}
+                            onClick={() => setColorMode(mode)}
+                            className={cn(
+                              "flex-1 py-2 px-3 rounded-lg border text-sm font-medium transition-all",
+                              colorMode === mode 
+                                ? "border-primary bg-primary/10 text-primary" 
+                                : "border-border hover:border-primary/50"
+                            )}
+                          >
+                            {mode === 'color' && 'Couleur'}
+                            {mode === 'grayscale' && 'N&B'}
+                            {mode === 'bw' && 'Document'}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
 
-                {/* Contrast slider */}
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between">
-                    <Label className="flex items-center gap-2">
-                      <Contrast className="w-4 h-4" />
-                      Contraste
-                    </Label>
-                    <span className="text-sm text-muted-foreground">{contrast}%</span>
-                  </div>
-                  <Slider
-                    value={[contrast]}
-                    onValueChange={([v]) => setContrast(v)}
-                    min={50}
-                    max={150}
-                    step={5}
-                  />
-                </div>
+                    {/* Brightness */}
+                    <div>
+                      <div className="flex items-center justify-between mb-2">
+                        <Label className="text-xs flex items-center gap-1">
+                          <Sun className="w-3 h-3" />
+                          Luminosité
+                        </Label>
+                        <span className="text-xs text-muted-foreground">{brightness}%</span>
+                      </div>
+                      <Slider
+                        value={[brightness]}
+                        onValueChange={([v]) => setBrightness(v)}
+                        min={50}
+                        max={150}
+                        step={5}
+                      />
+                    </div>
 
-                {/* Action buttons */}
-                <div className="flex gap-3 pt-2">
-                  <Button 
-                    variant="outline" 
-                    onClick={() => removePage(currentPageIndex)}
-                    className="text-destructive hover:text-destructive"
-                  >
-                    <Trash2 className="w-4 h-4 mr-2" />
-                    Supprimer
-                  </Button>
-                  <Button 
-                    className="flex-1 gradient-primary" 
-                    onClick={goToFinalize}
-                  >
-                    Continuer
-                  </Button>
-                </div>
+                    {/* Contrast */}
+                    <div>
+                      <div className="flex items-center justify-between mb-2">
+                        <Label className="text-xs flex items-center gap-1">
+                          <Contrast className="w-3 h-3" />
+                          Contraste
+                        </Label>
+                        <span className="text-xs text-muted-foreground">{contrast}%</span>
+                      </div>
+                      <Slider
+                        value={[contrast]}
+                        onValueChange={([v]) => setContrast(v)}
+                        min={50}
+                        max={150}
+                        step={5}
+                      />
+                    </div>
+
+                    {/* Actions */}
+                    <div className="flex gap-2 pt-2">
+                      <Button variant="outline" size="sm" onClick={() => setIsCropping(true)}>
+                        <Crop className="w-4 h-4 mr-1" />
+                        Recadrer
+                      </Button>
+                      <Button 
+                        variant="outline" 
+                        size="sm" 
+                        onClick={() => removePage(currentPageIndex)}
+                        className="text-destructive"
+                      >
+                        <Trash2 className="w-4 h-4 mr-1" />
+                        Supprimer
+                      </Button>
+                    </div>
+
+                    {/* Navigation */}
+                    <div className="flex gap-2 pt-2">
+                      <Button variant="outline" className="flex-1" onClick={addMorePages}>
+                        <Plus className="w-4 h-4 mr-1" />
+                        Ajouter une page
+                      </Button>
+                      <Button className="flex-1 gradient-primary" onClick={goToFinalize}>
+                        <Check className="w-4 h-4 mr-1" />
+                        Terminer
+                      </Button>
+                    </div>
+                  </>
+                )}
               </div>
             </motion.div>
           )}
@@ -642,99 +798,87 @@ export function ProfessionalScanner({ onComplete, onClose }: ProfessionalScanner
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
-              className="h-full flex flex-col p-4 overflow-y-auto"
+              className="h-full flex flex-col p-4"
             >
               {/* Preview */}
-              <div className="aspect-video rounded-xl overflow-hidden bg-secondary mb-6">
-                {pages.length > 0 && (
+              <div className="flex-1 flex items-center justify-center mb-4">
+                <div className="relative">
                   <img 
-                    src={pages[0].processed} 
+                    src={pages[0]?.processed} 
                     alt="Preview" 
-                    className="w-full h-full object-contain"
+                    className="max-h-[40vh] object-contain rounded-lg shadow-lg"
                   />
-                )}
-              </div>
-
-              {/* Pages count */}
-              <div className="flex items-center gap-2 mb-4 p-3 bg-secondary rounded-lg">
-                <FileText className="w-5 h-5 text-primary" />
-                <span className="text-sm">
-                  {pages.length} page{pages.length > 1 ? 's' : ''} • 
-                  {pages.length > 1 ? ' PDF' : ' Image JPG'}
-                </span>
-                <Button 
-                  variant="ghost" 
-                  size="sm" 
-                  className="ml-auto"
-                  onClick={() => setStep('edit')}
-                >
-                  Modifier
-                </Button>
-              </div>
-
-              {/* Document name */}
-              <div className="space-y-2 mb-6">
-                <Label>Nom du document</Label>
-                <Input
-                  value={documentName}
-                  onChange={(e) => setDocumentName(e.target.value)}
-                  placeholder="Mon document"
-                  className="h-12"
-                />
-              </div>
-
-              {/* Category selection */}
-              <div className="space-y-3 mb-6">
-                <Label>Catégorie</Label>
-                <div className="grid grid-cols-2 gap-2 max-h-48 overflow-y-auto">
-                  {categories.map((category) => {
-                    const Icon = category.icon;
-                    const isSelected = selectedCategory === category.id;
-                    
-                    return (
-                      <button
-                        key={category.id}
-                        onClick={() => setSelectedCategory(category.id)}
-                        className={cn(
-                          "flex items-center gap-2 p-3 rounded-lg border transition-all text-left",
-                          isSelected 
-                            ? "border-primary bg-primary/10" 
-                            : "border-border hover:border-primary/30"
-                        )}
-                      >
-                        <div 
-                          className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0"
-                          style={{ backgroundColor: category.color + '20', color: category.color }}
-                        >
-                          <Icon className="w-4 h-4" />
-                        </div>
-                        <span className="text-sm font-medium truncate">{category.name}</span>
-                        {isSelected && <Check className="w-4 h-4 text-primary ml-auto shrink-0" />}
-                      </button>
-                    );
-                  })}
+                  {pages.length > 1 && (
+                    <div className="absolute -bottom-2 -right-2 bg-primary text-primary-foreground rounded-full w-8 h-8 flex items-center justify-center text-sm font-bold">
+                      {pages.length}
+                    </div>
+                  )}
                 </div>
               </div>
 
-              {/* Save button */}
-              <div className="mt-auto pt-4 safe-area-bottom">
-                <Button
-                  onClick={generateDocument}
-                  disabled={!documentName.trim() || isGenerating}
-                  className="w-full h-12 gradient-primary"
-                >
-                  {isGenerating ? (
-                    <div className="w-5 h-5 border-2 border-primary-foreground border-t-transparent rounded-full animate-spin" />
-                  ) : (
-                    <>
-                      <Check className="w-5 h-5 mr-2" />
-                      Enregistrer
-                    </>
-                  )}
-                </Button>
-                <p className="text-xs text-muted-foreground text-center mt-3">
-                  🔒 Document chiffré en AES-256, stocké localement uniquement
-                </p>
+              {/* Form */}
+              <div className="space-y-4">
+                <div>
+                  <Label htmlFor="docName">Nom du document</Label>
+                  <Input
+                    id="docName"
+                    value={documentName}
+                    onChange={(e) => setDocumentName(e.target.value)}
+                    placeholder="Nom du document"
+                    className="mt-1"
+                  />
+                </div>
+
+                <div>
+                  <Label>Catégorie</Label>
+                  <div className="grid grid-cols-3 gap-2 mt-2">
+                    {categories.map(cat => {
+                      const Icon = cat.icon;
+                      return (
+                        <button
+                          key={cat.id}
+                          onClick={() => setSelectedCategory(cat.id)}
+                          className={cn(
+                            "flex flex-col items-center gap-1 p-3 rounded-lg border text-xs transition-all",
+                            selectedCategory === cat.id
+                              ? "border-primary bg-primary/10"
+                              : "border-border hover:border-primary/50"
+                          )}
+                        >
+                          <div style={{ color: cat.color }}><cat.icon className="w-5 h-5" /></div>
+                          <span className="truncate w-full text-center">{cat.name}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                <div className="flex gap-3 pt-4">
+                  <Button 
+                    variant="outline" 
+                    className="flex-1"
+                    onClick={() => setStep('edit')}
+                  >
+                    Retour
+                  </Button>
+                  <Button 
+                    className="flex-1 gradient-primary"
+                    onClick={generateDocument}
+                    disabled={isGenerating || !documentName.trim()}
+                  >
+                    {isGenerating ? (
+                      <>
+                        <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin mr-2" />
+                        Génération...
+                      </>
+                    ) : (
+                      <>
+                        <Check className="w-4 h-4 mr-2" />
+                        {pages.length > 1 ? 'Créer le PDF' : 'Enregistrer'}
+                      </>
+                    )}
+                  </Button>
+                </div>
               </div>
             </motion.div>
           )}
