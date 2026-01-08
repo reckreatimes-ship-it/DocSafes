@@ -3,12 +3,13 @@ import Webcam from 'react-webcam';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
   Camera, X, RotateCcw, Check, AlertCircle, Settings, Plus, FileText, 
-  Trash2, Crop, Sun, Contrast, Palette, ZoomIn, ZoomOut, Move
+  Trash2, Crop, Sun, Contrast, Palette, Zap, FlashlightOff, Focus
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Slider } from '@/components/ui/slider';
+import { Switch } from '@/components/ui/switch';
 import { jsPDF } from 'jspdf';
 import { categories } from '@/lib/categories';
 import { cn } from '@/lib/utils';
@@ -17,6 +18,14 @@ import {
   openAppSettings,
   isNativePlatform 
 } from '@/lib/cameraPermissions';
+import {
+  detectDocument,
+  resetDetection,
+  applyPerspectiveCorrection,
+  enhanceDocument,
+  Quadrilateral,
+  DetectionResult
+} from '@/lib/documentDetection';
 
 interface ProcessedPage {
   original: string;
@@ -36,22 +45,34 @@ type CameraState = 'initializing' | 'ready' | 'error' | 'denied' | 'permanently_
 
 export function ProfessionalScanner({ onComplete, onClose }: ProfessionalScannerProps) {
   const webcamRef = useRef<Webcam>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const overlayRef = useRef<HTMLCanvasElement>(null);
+  const animationRef = useRef<number | null>(null);
   
   const [step, setStep] = useState<ScanStep>('capture');
   const [pages, setPages] = useState<ProcessedPage[]>([]);
   const [currentPageIndex, setCurrentPageIndex] = useState(0);
   const [currentCapture, setCurrentCapture] = useState<string | null>(null);
+  const [detectedQuad, setDetectedQuad] = useState<Quadrilateral | null>(null);
   
-  // Camera state - simplified and robust
+  // Camera state
   const [cameraState, setCameraState] = useState<CameraState>('initializing');
   const [cameraError, setCameraError] = useState<string | null>(null);
   const [facingMode, setFacingMode] = useState<'user' | 'environment'>('environment');
   const [webcamReady, setWebcamReady] = useState(false);
   
+  // Detection settings
+  const [autoCapture, setAutoCapture] = useState(false);
+  const [isDocumentStable, setIsDocumentStable] = useState(false);
+  const [detectionConfidence, setDetectionConfidence] = useState(0);
+  const [autoCaptureCountdown, setAutoCaptureCountdown] = useState<number | null>(null);
+  
   // Edit state
   const [brightness, setBrightness] = useState(100);
-  const [contrast, setContrast] = useState(100);
-  const [colorMode, setColorMode] = useState<'color' | 'grayscale' | 'bw'>('color');
+  const [contrast, setContrast] = useState(115);
+  const [colorMode, setColorMode] = useState<'color' | 'grayscale' | 'bw'>('bw');
+  const [sharpen, setSharpen] = useState(true);
+  const [removeBackground, setRemoveBackground] = useState(true);
   
   // Crop state
   const [isCropping, setIsCropping] = useState(false);
@@ -62,7 +83,7 @@ export function ProfessionalScanner({ onComplete, onClose }: ProfessionalScanner
   const [selectedCategory, setSelectedCategory] = useState('other');
   const [isGenerating, setIsGenerating] = useState(false);
 
-  // Initialize camera with proper permission handling
+  // Initialize camera
   useEffect(() => {
     let mounted = true;
     
@@ -70,17 +91,13 @@ export function ProfessionalScanner({ onComplete, onClose }: ProfessionalScanner
       setCameraState('initializing');
       setCameraError(null);
       
-      console.log('[Scanner] Initializing camera...');
-      
       const result = await initializeCameraForScanner();
       
       if (!mounted) return;
       
       if (result.success) {
-        console.log('[Scanner] Camera initialized successfully');
         setCameraState('ready');
       } else {
-        console.error('[Scanner] Camera initialization failed:', result.error);
         setCameraError(result.error || 'Erreur d\'initialisation de la caméra');
         setCameraState(result.permanentlyDenied ? 'permanently_denied' : 'denied');
       }
@@ -90,8 +107,172 @@ export function ProfessionalScanner({ onComplete, onClose }: ProfessionalScanner
     
     return () => {
       mounted = false;
+      resetDetection();
+      if (animationRef.current) {
+        cancelAnimationFrame(animationRef.current);
+      }
     };
   }, []);
+
+  // Document detection loop
+  useEffect(() => {
+    if (step !== 'capture' || !webcamReady || currentCapture || cameraState !== 'ready') {
+      if (animationRef.current) {
+        cancelAnimationFrame(animationRef.current);
+        animationRef.current = null;
+      }
+      return;
+    }
+
+    let lastDetectionTime = 0;
+    const DETECTION_INTERVAL = 100; // ms between detections
+
+    const detectLoop = (timestamp: number) => {
+      if (timestamp - lastDetectionTime >= DETECTION_INTERVAL) {
+        lastDetectionTime = timestamp;
+        
+        const video = webcamRef.current?.video;
+        const overlay = overlayRef.current;
+        
+        if (video && overlay && video.readyState === 4) {
+          // Run detection
+          const result = detectDocument(video, 480);
+          
+          setDetectedQuad(result.quad);
+          setIsDocumentStable(result.stable);
+          setDetectionConfidence(result.confidence);
+          
+          // Draw overlay
+          drawOverlay(overlay, video, result);
+          
+          // Auto-capture if enabled and document is stable
+          if (autoCapture && result.stable && result.confidence > 0.6) {
+            handleAutoCapture();
+          }
+        }
+      }
+      
+      animationRef.current = requestAnimationFrame(detectLoop);
+    };
+    
+    animationRef.current = requestAnimationFrame(detectLoop);
+    
+    return () => {
+      if (animationRef.current) {
+        cancelAnimationFrame(animationRef.current);
+        animationRef.current = null;
+      }
+    };
+  }, [step, webcamReady, currentCapture, cameraState, autoCapture]);
+
+  // Auto-capture countdown
+  const handleAutoCapture = useCallback(() => {
+    if (autoCaptureCountdown !== null) return;
+    
+    setAutoCaptureCountdown(3);
+    
+    const countdown = setInterval(() => {
+      setAutoCaptureCountdown(prev => {
+        if (prev === null || prev <= 1) {
+          clearInterval(countdown);
+          // Perform capture
+          capture();
+          return null;
+        }
+        return prev - 1;
+      });
+    }, 500);
+  }, [autoCaptureCountdown]);
+
+  // Draw detection overlay
+  const drawOverlay = (
+    canvas: HTMLCanvasElement, 
+    video: HTMLVideoElement,
+    result: DetectionResult
+  ) => {
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    
+    // Match canvas size to video display size
+    const rect = video.getBoundingClientRect();
+    if (canvas.width !== rect.width || canvas.height !== rect.height) {
+      canvas.width = rect.width;
+      canvas.height = rect.height;
+    }
+    
+    // Clear canvas
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    
+    if (!result.detected || !result.quad) {
+      // No document detected - show scan guide
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.3)';
+      ctx.lineWidth = 2;
+      ctx.setLineDash([10, 10]);
+      
+      const padding = 40;
+      const w = canvas.width - padding * 2;
+      const h = canvas.height - padding * 2;
+      
+      ctx.strokeRect(padding, padding, w, h);
+      ctx.setLineDash([]);
+      return;
+    }
+    
+    // Scale quad to canvas coordinates
+    const scaleX = canvas.width / video.videoWidth;
+    const scaleY = canvas.height / video.videoHeight;
+    
+    const points = [
+      { x: result.quad.topLeft.x * scaleX, y: result.quad.topLeft.y * scaleY },
+      { x: result.quad.topRight.x * scaleX, y: result.quad.topRight.y * scaleY },
+      { x: result.quad.bottomRight.x * scaleX, y: result.quad.bottomRight.y * scaleY },
+      { x: result.quad.bottomLeft.x * scaleX, y: result.quad.bottomLeft.y * scaleY },
+    ];
+    
+    // Draw filled quad with transparency
+    ctx.fillStyle = result.stable 
+      ? 'rgba(34, 197, 94, 0.15)' // Green when stable
+      : 'rgba(59, 130, 246, 0.15)'; // Blue when detected
+    
+    ctx.beginPath();
+    ctx.moveTo(points[0].x, points[0].y);
+    points.forEach(p => ctx.lineTo(p.x, p.y));
+    ctx.closePath();
+    ctx.fill();
+    
+    // Draw outline
+    ctx.strokeStyle = result.stable 
+      ? 'rgba(34, 197, 94, 0.9)'
+      : 'rgba(59, 130, 246, 0.9)';
+    ctx.lineWidth = 3;
+    ctx.stroke();
+    
+    // Draw corner indicators
+    const cornerSize = 20;
+    ctx.lineWidth = 4;
+    ctx.strokeStyle = result.stable ? '#22c55e' : '#3b82f6';
+    
+    points.forEach((point, i) => {
+      const prevPoint = points[(i + 3) % 4];
+      const nextPoint = points[(i + 1) % 4];
+      
+      // Direction to adjacent points
+      const toPrev = { 
+        x: (prevPoint.x - point.x) / Math.hypot(prevPoint.x - point.x, prevPoint.y - point.y) * cornerSize,
+        y: (prevPoint.y - point.y) / Math.hypot(prevPoint.x - point.x, prevPoint.y - point.y) * cornerSize
+      };
+      const toNext = {
+        x: (nextPoint.x - point.x) / Math.hypot(nextPoint.x - point.x, nextPoint.y - point.y) * cornerSize,
+        y: (nextPoint.y - point.y) / Math.hypot(nextPoint.x - point.x, nextPoint.y - point.y) * cornerSize
+      };
+      
+      ctx.beginPath();
+      ctx.moveTo(point.x + toPrev.x, point.y + toPrev.y);
+      ctx.lineTo(point.x, point.y);
+      ctx.lineTo(point.x + toNext.x, point.y + toNext.y);
+      ctx.stroke();
+    });
+  };
 
   const videoConstraints = {
     width: { ideal: 1920 },
@@ -100,19 +281,17 @@ export function ProfessionalScanner({ onComplete, onClose }: ProfessionalScanner
   };
 
   const handleUserMedia = useCallback(() => {
-    console.log('[Scanner] Webcam stream started');
     setWebcamReady(true);
   }, []);
 
   const handleUserMediaError = useCallback((error: string | DOMException) => {
-    console.error('[Scanner] Webcam error:', error);
     const errorMessage = typeof error === 'string' ? error : error.message;
     
     if (errorMessage.includes('Permission') || errorMessage.includes('NotAllowed')) {
-      setCameraError('Accès à la caméra refusé. Veuillez autoriser l\'accès dans les paramètres.');
+      setCameraError('Accès à la caméra refusé.');
       setCameraState('denied');
-    } else if (errorMessage.includes('NotFound') || errorMessage.includes('DevicesNotFound')) {
-      setCameraError('Aucune caméra détectée sur cet appareil.');
+    } else if (errorMessage.includes('NotFound')) {
+      setCameraError('Aucune caméra détectée.');
       setCameraState('error');
     } else {
       setCameraError(`Erreur de caméra: ${errorMessage}`);
@@ -135,41 +314,81 @@ export function ProfessionalScanner({ onComplete, onClose }: ProfessionalScanner
     }
   }, []);
 
-  const capture = useCallback(() => {
-    if (!webcamRef.current || !webcamReady) {
-      console.warn('[Scanner] Cannot capture - webcam not ready');
-      return;
-    }
+  const capture = useCallback(async () => {
+    if (!webcamRef.current || !webcamReady) return;
     
-    const imageSrc = webcamRef.current.getScreenshot();
-    if (imageSrc) {
-      console.log('[Scanner] Captured image');
-      setCurrentCapture(imageSrc);
+    setAutoCaptureCountdown(null);
+    
+    const video = webcamRef.current.video;
+    if (!video) return;
+    
+    // Create high-resolution capture canvas
+    const captureCanvas = document.createElement('canvas');
+    captureCanvas.width = video.videoWidth;
+    captureCanvas.height = video.videoHeight;
+    const ctx = captureCanvas.getContext('2d')!;
+    ctx.drawImage(video, 0, 0);
+    
+    // If we have a detected quad, apply perspective correction
+    if (detectedQuad) {
+      try {
+        const correctedCanvas = await applyPerspectiveCorrection(captureCanvas, detectedQuad);
+        setCurrentCapture(correctedCanvas.toDataURL('image/jpeg', 0.95));
+      } catch (e) {
+        // Fallback to uncorrected
+        setCurrentCapture(captureCanvas.toDataURL('image/jpeg', 0.95));
+      }
+    } else {
+      setCurrentCapture(captureCanvas.toDataURL('image/jpeg', 0.95));
     }
-  }, [webcamReady]);
+  }, [webcamReady, detectedQuad]);
 
-  const confirmCapture = () => {
+  const confirmCapture = async () => {
     if (!currentCapture) return;
+    
+    // Apply document enhancement
+    const img = new Image();
+    await new Promise<void>((resolve) => {
+      img.onload = () => resolve();
+      img.src = currentCapture;
+    });
+    
+    const canvas = document.createElement('canvas');
+    canvas.width = img.width;
+    canvas.height = img.height;
+    const ctx = canvas.getContext('2d')!;
+    ctx.drawImage(img, 0, 0);
+    
+    // Apply scan-like enhancement
+    enhanceDocument(canvas, {
+      mode: colorMode,
+      brightness,
+      contrast,
+      sharpen,
+      removeBackground
+    });
+    
+    const processedImage = canvas.toDataURL('image/jpeg', 0.95);
     
     const newPage: ProcessedPage = {
       original: currentCapture,
-      processed: currentCapture,
-      brightness: 100,
-      contrast: 100,
-      mode: 'color'
+      processed: processedImage,
+      brightness,
+      contrast,
+      mode: colorMode
     };
     
     setPages(prev => [...prev, newPage]);
     setCurrentPageIndex(pages.length);
     setCurrentCapture(null);
+    setDetectedQuad(null);
     setStep('edit');
-    setBrightness(100);
-    setContrast(100);
-    setColorMode('color');
   };
 
   const retakeCapture = () => {
     setCurrentCapture(null);
+    setDetectedQuad(null);
+    setAutoCaptureCountdown(null);
   };
 
   const toggleCamera = () => {
@@ -191,7 +410,6 @@ export function ProfessionalScanner({ onComplete, onClose }: ProfessionalScanner
         const canvas = document.createElement('canvas');
         const ctx = canvas.getContext('2d')!;
         
-        // Apply crop if specified
         const sx = crop ? (crop.x / 100) * img.width : 0;
         const sy = crop ? (crop.y / 100) * img.height : 0;
         const sw = crop ? (crop.width / 100) * img.width : img.width;
@@ -199,56 +417,21 @@ export function ProfessionalScanner({ onComplete, onClose }: ProfessionalScanner
         
         canvas.width = sw;
         canvas.height = sh;
-        
-        // Draw cropped image
         ctx.drawImage(img, sx, sy, sw, sh, 0, 0, sw, sh);
         
-        // Apply filters
-        const imageDataObj = ctx.getImageData(0, 0, canvas.width, canvas.height);
-        const data = imageDataObj.data;
+        enhanceDocument(canvas, {
+          mode,
+          brightness: brightnessVal,
+          contrast: contrastVal,
+          sharpen,
+          removeBackground
+        });
         
-        const brightnessFactor = brightnessVal / 100;
-        const contrastFactor = (contrastVal - 100) * 2.55;
-        
-        for (let i = 0; i < data.length; i += 4) {
-          let r = data[i];
-          let g = data[i + 1];
-          let b = data[i + 2];
-          
-          // Apply brightness
-          r = r * brightnessFactor;
-          g = g * brightnessFactor;
-          b = b * brightnessFactor;
-          
-          // Apply contrast
-          r = ((r - 128) * (1 + contrastFactor / 128)) + 128;
-          g = ((g - 128) * (1 + contrastFactor / 128)) + 128;
-          b = ((b - 128) * (1 + contrastFactor / 128)) + 128;
-          
-          // Apply color mode
-          if (mode === 'grayscale' || mode === 'bw') {
-            const gray = 0.299 * r + 0.587 * g + 0.114 * b;
-            if (mode === 'bw') {
-              const threshold = 128;
-              const bwValue = gray > threshold ? 255 : 0;
-              r = g = b = bwValue;
-            } else {
-              r = g = b = gray;
-            }
-          }
-          
-          // Clamp values
-          data[i] = Math.max(0, Math.min(255, r));
-          data[i + 1] = Math.max(0, Math.min(255, g));
-          data[i + 2] = Math.max(0, Math.min(255, b));
-        }
-        
-        ctx.putImageData(imageDataObj, 0, 0);
         resolve(canvas.toDataURL('image/jpeg', 0.95));
       };
       img.src = imageData;
     });
-  }, []);
+  }, [sharpen, removeBackground]);
 
   const applyEdits = useCallback(async () => {
     if (pages.length === 0) return;
@@ -276,10 +459,10 @@ export function ProfessionalScanner({ onComplete, onClose }: ProfessionalScanner
     if (step === 'edit' && pages.length > 0) {
       const debounce = setTimeout(() => {
         applyEdits();
-      }, 100);
+      }, 150);
       return () => clearTimeout(debounce);
     }
-  }, [brightness, contrast, colorMode, applyEdits, step]);
+  }, [brightness, contrast, colorMode, sharpen, removeBackground, step]);
 
   const applyCrop = async () => {
     if (pages.length === 0) return;
@@ -317,6 +500,7 @@ export function ProfessionalScanner({ onComplete, onClose }: ProfessionalScanner
 
   const addMorePages = () => {
     setStep('capture');
+    resetDetection();
   };
 
   const goToFinalize = () => {
@@ -330,13 +514,11 @@ export function ProfessionalScanner({ onComplete, onClose }: ProfessionalScanner
     
     try {
       if (pages.length === 1) {
-        // Single image - save as JPG
         const response = await fetch(pages[0].processed);
         const blob = await response.blob();
         const file = new File([blob], `${documentName}.jpg`, { type: 'image/jpeg' });
         onComplete(file, pages[0].processed, documentName, selectedCategory);
       } else {
-        // Multiple pages - create PDF
         const pdf = new jsPDF({
           orientation: 'portrait',
           unit: 'mm',
@@ -386,7 +568,6 @@ export function ProfessionalScanner({ onComplete, onClose }: ProfessionalScanner
 
   const currentPage = pages[currentPageIndex];
 
-  // Render camera error/permission state
   const renderCameraError = () => (
     <div className="flex flex-col items-center justify-center h-full gap-4 p-6 text-center bg-black">
       <AlertCircle className="w-16 h-16 text-destructive" />
@@ -395,12 +576,11 @@ export function ProfessionalScanner({ onComplete, onClose }: ProfessionalScanner
       {cameraState === 'permanently_denied' ? (
         <div className="flex flex-col gap-3">
           <p className="text-sm text-muted-foreground">
-            La permission a été refusée définitivement. 
-            Veuillez l'activer manuellement dans les paramètres.
+            Veuillez activer la caméra dans les paramètres.
           </p>
           <Button onClick={openAppSettings} variant="outline">
             <Settings className="w-4 h-4 mr-2" />
-            Ouvrir les paramètres
+            Paramètres
           </Button>
           <Button onClick={retryCamera} variant="ghost">
             <RotateCcw className="w-4 h-4 mr-2" />
@@ -428,11 +608,24 @@ export function ProfessionalScanner({ onComplete, onClose }: ProfessionalScanner
         <button onClick={onClose} className="p-2 rounded-lg hover:bg-secondary">
           <X className="w-6 h-6" />
         </button>
-        <span className="font-medium">
-          {step === 'capture' && 'Scanner'}
-          {step === 'edit' && `Édition (${currentPageIndex + 1}/${pages.length})`}
-          {step === 'finalize' && 'Finaliser'}
-        </span>
+        <div className="text-center">
+          <span className="font-medium">
+            {step === 'capture' && 'Scanner Pro'}
+            {step === 'edit' && `Édition (${currentPageIndex + 1}/${pages.length})`}
+            {step === 'finalize' && 'Finaliser'}
+          </span>
+          {step === 'capture' && detectionConfidence > 0 && (
+            <div className="text-xs text-muted-foreground">
+              {isDocumentStable ? (
+                <span className="text-green-500 flex items-center justify-center gap-1">
+                  <Focus className="w-3 h-3" /> Document détecté
+                </span>
+              ) : (
+                <span className="text-blue-500">Recherche...</span>
+              )}
+            </div>
+          )}
+        </div>
         <div className="w-10" />
       </div>
 
@@ -448,8 +641,7 @@ export function ProfessionalScanner({ onComplete, onClose }: ProfessionalScanner
               exit={{ opacity: 0 }}
               className="h-full flex flex-col"
             >
-              <div className="flex-1 relative bg-black">
-                {/* Camera loading/error states */}
+              <div className="flex-1 relative bg-black overflow-hidden">
                 {cameraState === 'initializing' && (
                   <div className="flex flex-col items-center justify-center h-full gap-4">
                     <div className="w-12 h-12 border-4 border-primary border-t-transparent rounded-full animate-spin" />
@@ -461,12 +653,10 @@ export function ProfessionalScanner({ onComplete, onClose }: ProfessionalScanner
                   renderCameraError()
                 }
                 
-                {/* Current capture preview */}
                 {cameraState === 'ready' && currentCapture && (
                   <img src={currentCapture} alt="Capture" className="w-full h-full object-contain" />
                 )}
                 
-                {/* Live webcam feed */}
                 {cameraState === 'ready' && !currentCapture && (
                   <>
                     <Webcam
@@ -480,17 +670,23 @@ export function ProfessionalScanner({ onComplete, onClose }: ProfessionalScanner
                       onUserMediaError={handleUserMediaError}
                     />
                     
-                    {/* Document guide overlay */}
-                    <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                      <div className="w-[85%] aspect-[3/4] border-2 border-white/50 rounded-lg relative">
-                        <div className="absolute top-0 left-0 w-8 h-8 border-t-4 border-l-4 border-primary rounded-tl-lg" />
-                        <div className="absolute top-0 right-0 w-8 h-8 border-t-4 border-r-4 border-primary rounded-tr-lg" />
-                        <div className="absolute bottom-0 left-0 w-8 h-8 border-b-4 border-l-4 border-primary rounded-bl-lg" />
-                        <div className="absolute bottom-0 right-0 w-8 h-8 border-b-4 border-r-4 border-primary rounded-br-lg" />
-                      </div>
-                    </div>
+                    {/* Detection overlay */}
+                    <canvas
+                      ref={overlayRef}
+                      className="absolute inset-0 w-full h-full pointer-events-none"
+                    />
                     
-                    {/* Loading indicator for webcam */}
+                    {/* Auto-capture countdown */}
+                    {autoCaptureCountdown !== null && (
+                      <div className="absolute inset-0 flex items-center justify-center bg-black/30">
+                        <div className="w-24 h-24 rounded-full bg-primary flex items-center justify-center">
+                          <span className="text-4xl font-bold text-primary-foreground">
+                            {autoCaptureCountdown}
+                          </span>
+                        </div>
+                      </div>
+                    )}
+                    
                     {!webcamReady && (
                       <div className="absolute inset-0 flex items-center justify-center bg-black/50">
                         <div className="w-10 h-10 border-4 border-white border-t-transparent rounded-full animate-spin" />
@@ -500,26 +696,39 @@ export function ProfessionalScanner({ onComplete, onClose }: ProfessionalScanner
                 )}
               </div>
 
-              {/* Pages strip */}
-              {pages.length > 0 && !currentCapture && cameraState === 'ready' && (
-                <div className="p-3 bg-secondary/50 border-t border-border">
-                  <div className="flex gap-2 overflow-x-auto">
-                    {pages.map((page, index) => (
-                      <div key={index} className="relative shrink-0">
-                        <img 
-                          src={page.processed} 
-                          alt={`Page ${index + 1}`}
-                          className="w-14 h-18 object-cover rounded-lg border border-border"
-                        />
-                        <button
-                          onClick={() => removePage(index)}
-                          className="absolute -top-1 -right-1 w-5 h-5 bg-destructive rounded-full flex items-center justify-center"
-                        >
-                          <X className="w-3 h-3 text-white" />
-                        </button>
-                      </div>
-                    ))}
+              {/* Settings bar */}
+              {cameraState === 'ready' && !currentCapture && (
+                <div className="px-4 py-2 bg-secondary/50 border-t border-border flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Switch
+                      checked={autoCapture}
+                      onCheckedChange={setAutoCapture}
+                      id="auto-capture"
+                    />
+                    <Label htmlFor="auto-capture" className="text-xs">
+                      Capture auto
+                    </Label>
                   </div>
+                  
+                  {pages.length > 0 && (
+                    <div className="flex gap-2 overflow-x-auto">
+                      {pages.map((page, index) => (
+                        <div key={index} className="relative shrink-0">
+                          <img 
+                            src={page.processed} 
+                            alt={`Page ${index + 1}`}
+                            className="w-10 h-14 object-cover rounded border border-border"
+                          />
+                          <button
+                            onClick={() => removePage(index)}
+                            className="absolute -top-1 -right-1 w-4 h-4 bg-destructive rounded-full flex items-center justify-center"
+                          >
+                            <X className="w-2.5 h-2.5 text-white" />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -548,7 +757,13 @@ export function ProfessionalScanner({ onComplete, onClose }: ProfessionalScanner
                     <button
                       onClick={capture}
                       disabled={cameraState !== 'ready' || !webcamReady}
-                      className="w-16 h-16 rounded-full bg-primary flex items-center justify-center hover:scale-95 transition-transform disabled:opacity-50 disabled:cursor-not-allowed"
+                      className={cn(
+                        "w-16 h-16 rounded-full flex items-center justify-center transition-all",
+                        "disabled:opacity-50 disabled:cursor-not-allowed",
+                        isDocumentStable 
+                          ? "bg-green-500 hover:bg-green-600 scale-110" 
+                          : "bg-primary hover:scale-95"
+                      )}
                     >
                       <Camera className="w-7 h-7 text-primary-foreground" />
                     </button>
@@ -575,7 +790,6 @@ export function ProfessionalScanner({ onComplete, onClose }: ProfessionalScanner
               exit={{ opacity: 0 }}
               className="h-full flex flex-col"
             >
-              {/* Image preview */}
               <div className="flex-1 relative bg-black overflow-hidden">
                 {isCropping ? (
                   <div className="relative w-full h-full">
@@ -584,7 +798,6 @@ export function ProfessionalScanner({ onComplete, onClose }: ProfessionalScanner
                       alt="Original" 
                       className="w-full h-full object-contain opacity-50"
                     />
-                    {/* Crop overlay */}
                     <div 
                       className="absolute border-2 border-primary bg-transparent"
                       style={{
@@ -609,7 +822,6 @@ export function ProfessionalScanner({ onComplete, onClose }: ProfessionalScanner
                 )}
               </div>
 
-              {/* Page thumbnails */}
               {pages.length > 1 && (
                 <div className="p-3 bg-secondary/50 border-t border-border">
                   <div className="flex gap-2 overflow-x-auto">
@@ -641,7 +853,6 @@ export function ProfessionalScanner({ onComplete, onClose }: ProfessionalScanner
                 </div>
               )}
 
-              {/* Edit controls */}
               <div className="p-4 bg-background border-t border-border space-y-4 max-h-[40vh] overflow-y-auto">
                 {isCropping ? (
                   <div className="space-y-4">
@@ -698,9 +909,8 @@ export function ProfessionalScanner({ onComplete, onClose }: ProfessionalScanner
                   </div>
                 ) : (
                   <>
-                    {/* Color mode */}
                     <div>
-                      <Label className="text-xs mb-2 block">Mode couleur</Label>
+                      <Label className="text-xs mb-2 block">Mode document</Label>
                       <div className="flex gap-2">
                         {(['color', 'grayscale', 'bw'] as const).map(mode => (
                           <button
@@ -714,14 +924,13 @@ export function ProfessionalScanner({ onComplete, onClose }: ProfessionalScanner
                             )}
                           >
                             {mode === 'color' && 'Couleur'}
-                            {mode === 'grayscale' && 'N&B'}
+                            {mode === 'grayscale' && 'Gris'}
                             {mode === 'bw' && 'Document'}
                           </button>
                         ))}
                       </div>
                     </div>
 
-                    {/* Brightness */}
                     <div>
                       <div className="flex items-center justify-between mb-2">
                         <Label className="text-xs flex items-center gap-1">
@@ -739,7 +948,6 @@ export function ProfessionalScanner({ onComplete, onClose }: ProfessionalScanner
                       />
                     </div>
 
-                    {/* Contrast */}
                     <div>
                       <div className="flex items-center justify-between mb-2">
                         <Label className="text-xs flex items-center gap-1">
@@ -757,7 +965,14 @@ export function ProfessionalScanner({ onComplete, onClose }: ProfessionalScanner
                       />
                     </div>
 
-                    {/* Actions */}
+                    <div className="flex items-center justify-between">
+                      <Label className="text-xs flex items-center gap-1">
+                        <Zap className="w-3 h-3" />
+                        Netteté
+                      </Label>
+                      <Switch checked={sharpen} onCheckedChange={setSharpen} />
+                    </div>
+
                     <div className="flex gap-2 pt-2">
                       <Button variant="outline" size="sm" onClick={() => setIsCropping(true)}>
                         <Crop className="w-4 h-4 mr-1" />
@@ -774,11 +989,10 @@ export function ProfessionalScanner({ onComplete, onClose }: ProfessionalScanner
                       </Button>
                     </div>
 
-                    {/* Navigation */}
                     <div className="flex gap-2 pt-2">
                       <Button variant="outline" className="flex-1" onClick={addMorePages}>
                         <Plus className="w-4 h-4 mr-1" />
-                        Ajouter une page
+                        Ajouter page
                       </Button>
                       <Button className="flex-1 gradient-primary" onClick={goToFinalize}>
                         <Check className="w-4 h-4 mr-1" />
@@ -800,7 +1014,6 @@ export function ProfessionalScanner({ onComplete, onClose }: ProfessionalScanner
               exit={{ opacity: 0 }}
               className="h-full flex flex-col p-4"
             >
-              {/* Preview */}
               <div className="flex-1 flex items-center justify-center mb-4">
                 <div className="relative">
                   <img 
@@ -816,7 +1029,6 @@ export function ProfessionalScanner({ onComplete, onClose }: ProfessionalScanner
                 </div>
               </div>
 
-              {/* Form */}
               <div className="space-y-4">
                 <div>
                   <Label htmlFor="docName">Nom du document</Label>
@@ -832,24 +1044,21 @@ export function ProfessionalScanner({ onComplete, onClose }: ProfessionalScanner
                 <div>
                   <Label>Catégorie</Label>
                   <div className="grid grid-cols-3 gap-2 mt-2">
-                    {categories.map(cat => {
-                      const Icon = cat.icon;
-                      return (
-                        <button
-                          key={cat.id}
-                          onClick={() => setSelectedCategory(cat.id)}
-                          className={cn(
-                            "flex flex-col items-center gap-1 p-3 rounded-lg border text-xs transition-all",
-                            selectedCategory === cat.id
-                              ? "border-primary bg-primary/10"
-                              : "border-border hover:border-primary/50"
-                          )}
-                        >
-                          <div style={{ color: cat.color }}><cat.icon className="w-5 h-5" /></div>
-                          <span className="truncate w-full text-center">{cat.name}</span>
-                        </button>
-                      );
-                    })}
+                    {categories.map(cat => (
+                      <button
+                        key={cat.id}
+                        onClick={() => setSelectedCategory(cat.id)}
+                        className={cn(
+                          "flex flex-col items-center gap-1 p-3 rounded-lg border text-xs transition-all",
+                          selectedCategory === cat.id
+                            ? "border-primary bg-primary/10"
+                            : "border-border hover:border-primary/50"
+                        )}
+                      >
+                        <div style={{ color: cat.color }}><cat.icon className="w-5 h-5" /></div>
+                        <span className="truncate w-full text-center">{cat.name}</span>
+                      </button>
+                    ))}
                   </div>
                 </div>
 
@@ -874,11 +1083,15 @@ export function ProfessionalScanner({ onComplete, onClose }: ProfessionalScanner
                     ) : (
                       <>
                         <Check className="w-4 h-4 mr-2" />
-                        {pages.length > 1 ? 'Créer le PDF' : 'Enregistrer'}
+                        {pages.length > 1 ? 'Créer PDF' : 'Enregistrer'}
                       </>
                     )}
                   </Button>
                 </div>
+                
+                <p className="text-xs text-muted-foreground text-center">
+                  🔒 100% local - Aucune donnée envoyée
+                </p>
               </div>
             </motion.div>
           )}
